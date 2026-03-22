@@ -54,8 +54,8 @@ final class PanelManager {
         self.onPillClick = onPillClick
 
         // Calculate pill rect in screen coordinates
-        let pillW = notch.notchWidth + 6
-        let pillH = notch.notchHeight + 2
+        let pillW = notch.notchWidth + 2
+        let pillH = notch.notchHeight
         let pillX = notch.rect.midX - pillW / 2
         let pillY = notch.screenFrame.maxY - pillH
         self.pillRect = NSRect(x: pillX, y: pillY, width: pillW, height: pillH)

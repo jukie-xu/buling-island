@@ -108,7 +108,7 @@ struct AnimationSettingsTab: View {
         if settings.useCustomPillColor {
             return settings.pillBorderColor
         }
-        return colorScheme == .dark ? .white : .black
+        return .primary
     }
 
     var body: some View {
@@ -187,10 +187,10 @@ struct AnimationSettingsTab: View {
                     .transition(settings.expandAnimation.transition)
                 } else {
                     UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: 0)
-                        .fill(pillColor.opacity(0.08))
+                        .fill(pillColor.opacity(0.05))
                         .overlay(
                             UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: 0)
-                                .strokeBorder(pillColor.opacity(0.2), lineWidth: 1.5)
+                                .strokeBorder(pillColor.opacity(0.15), lineWidth: 1)
                         )
                         .frame(width: 76, height: 14)
                         .transition(settings.collapseAnimation.transition)
@@ -416,7 +416,7 @@ struct AppearanceSettingsTab: View {
         if settings.useCustomPillColor {
             return settings.pillBorderColor
         }
-        return colorScheme == .dark ? .white : .black
+        return .primary
     }
 
     var body: some View {
@@ -450,10 +450,10 @@ struct AppearanceSettingsTab: View {
                     .frame(width: 70, height: 12)
 
                 UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: 0)
-                    .fill(previewColor.opacity(0.08))
+                    .fill(previewColor.opacity(0.05))
                     .overlay(
                         UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: 0)
-                            .strokeBorder(previewColor.opacity(0.2), lineWidth: 1.5)
+                            .strokeBorder(previewColor.opacity(0.15), lineWidth: 1)
                     )
                     .frame(width: 76, height: 14)
             }

@@ -3,23 +3,20 @@ import SwiftUI
 struct IslandView: View {
 
     @ObservedObject var viewModel: IslandViewModel
+    @ObservedObject private var settings = SettingsManager.shared
     @Environment(\.colorScheme) private var colorScheme
     @State private var isLaunchpadEditing = false
 
     private var fillColor: Color {
-        colorScheme == .dark ? .white : .black
+        .primary
     }
 
     private var borderColor: Color {
-        colorScheme == .dark ? .white : .black
+        .primary
     }
 
     private var notch: NotchInfo {
         NotchDetector.detect()
-    }
-
-    private var settings: SettingsManager {
-        viewModel.settings
     }
 
     var body: some View {
@@ -53,17 +50,18 @@ struct IslandView: View {
         if settings.useCustomPillColor {
             return settings.pillBorderColor
         }
-        return colorScheme == .dark ? .white : .black
+        // Match macOS menu bar / title bar tint
+        return .primary
     }
 
     private var collapsedView: some View {
         pillShape
-            .fill(pillColor.opacity(0.08))
+            .fill(pillColor.opacity(0.05))
             .overlay(
                 pillShape
-                    .strokeBorder(pillColor.opacity(0.2), lineWidth: 1.5)
+                    .strokeBorder(pillColor.opacity(0.15), lineWidth: 1)
             )
-            .frame(width: notch.notchWidth + 6, height: notch.notchHeight + 2)
+            .frame(width: notch.notchWidth + 2, height: notch.notchHeight)
     }
 
     // MARK: - Expanded: flush with top edge, only bottom corners rounded
@@ -141,12 +139,11 @@ struct IslandView: View {
         .background(
             expandedShape
                 .fill(.regularMaterial)
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.15), radius: 12, y: 4)
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 8, y: 3)
         )
         .overlay(alignment: .bottom) {
-            // Subtle bottom separator line only
             expandedShape
-                .strokeBorder(borderColor.opacity(0.08), lineWidth: 0.5)
+                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         }
         .clipShape(expandedShape)
         .onChange(of: viewModel.state) { _ in
