@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "BulingIsland",
-            path: "BulingIsland",
+            path: "Sources",
             exclude: [
                 "Info.plist",
             ],

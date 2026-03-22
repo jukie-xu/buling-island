@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="BulingIsland"
-VERSION=$(defaults read "$SCRIPT_DIR/$APP_NAME/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "1.0.0")
+VERSION=$(defaults read "$SCRIPT_DIR/Sources/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "1.0.0")
 DMG_NAME="${APP_NAME}_v${VERSION}.dmg"
 DMG_DIR="$SCRIPT_DIR/dist"
 DMG_PATH="$DMG_DIR/$DMG_NAME"

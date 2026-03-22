@@ -20,7 +20,7 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # Copy Info.plist
-cp "$SCRIPT_DIR/$APP_NAME/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+cp "$SCRIPT_DIR/Sources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
 # Create PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
