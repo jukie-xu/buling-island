@@ -7,7 +7,8 @@ struct BulingIslandApp: App {
 
     var body: some Scene {
         Settings {
-            EmptyView()
+            SettingsView()
+                .frame(minWidth: 920, minHeight: 700)
         }
     }
 }

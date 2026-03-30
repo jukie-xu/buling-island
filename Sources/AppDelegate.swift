@@ -6,11 +6,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var islandViewModel = IslandViewModel()
 
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            forName: .panelInteractionPrefsDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            Task { @MainActor in
+                PanelManager.shared.syncInteractionState(viewModel: self.islandViewModel)
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let contentView = IslandView(viewModel: islandViewModel)
         PanelManager.shared.createPanel(with: contentView) { [weak self] in
             self?.islandViewModel.toggle()
         }
+        PanelManager.shared.syncInteractionState(viewModel: islandViewModel)
     }
 }
 
@@ -58,6 +73,13 @@ final class IslandViewModel: ObservableObject {
             state = .collapsed
             searchText = ""
         }
+        PanelManager.shared.setCollapsed()
+    }
+
+    /// 设置关闭灵动岛等需要立即同步面板状态时使用（无展开动画）。
+    func forceCollapseForPanelSync() {
+        state = .collapsed
+        searchText = ""
         PanelManager.shared.setCollapsed()
     }
 

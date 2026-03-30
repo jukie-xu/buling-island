@@ -6,6 +6,7 @@ final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
+@MainActor
 final class PanelManager {
 
     static let shared = PanelManager()
@@ -15,14 +16,83 @@ final class PanelManager {
     private var pillClickMonitor: Any?
     private var pillRect: NSRect = .zero
     private var onPillClick: (() -> Void)?
+    private var visibilityObserverTokens: [NSObjectProtocol] = []
+    private var pendingBringFrontTasks: [DispatchWorkItem] = []
 
-    private init() {}
+    private init() {
+        installIslandVisibilityObservers()
+    }
+
+    /// 三指左右切桌面时，合成器往往在动画全程里多次重排窗口层级；单次 `orderFront` 很容易落在「中间一帧」下面。
+    /// 用短序列多次补拉 + `activeSpace` / 遮挡通知，尽量盖住整段过渡。
+    private func scheduleBringIslandToFrontBurst() {
+        pendingBringFrontTasks.forEach { $0.cancel() }
+        pendingBringFrontTasks.removeAll()
+
+        let delays: [TimeInterval] = [0, 0.04, 0.09, 0.16, 0.28, 0.45, 0.68, 0.95, 1.25, 1.55]
+        for d in delays {
+            let work = DispatchWorkItem { [weak self] in
+                Task { @MainActor in
+                    self?.bringIslandPanelsToFrontNow()
+                }
+            }
+            pendingBringFrontTasks.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + d, execute: work)
+        }
+    }
+
+    private func applyIslandPanelSpaceChrome(_ panel: NSWindow) {
+        // 略高于 `.screenSaver`，减轻被桌面切换过渡期里的临时遮罩压住。
+        panel.level = NSWindow.Level(NSWindow.Level.screenSaver.rawValue + 24)
+        var behaviors: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        if #available(macOS 15.0, *) {
+            behaviors.insert(.stationary)
+        } else {
+            // Ventura / Sonoma 等版本在运行时支持该位，旧 SDK 未导出 `.stationary` 时仍可编译。
+            behaviors.insert(NSWindow.CollectionBehavior(rawValue: 16))
+        }
+        panel.collectionBehavior = behaviors
+    }
+
+    private func bringIslandPanelsToFrontNow() {
+        guard SettingsManager.shared.islandEnabled, let panel else { return }
+        applyIslandPanelSpaceChrome(panel)
+        panel.orderFrontRegardless()
+    }
+
+    private func installIslandVisibilityObservers() {
+        func observe(_ center: NotificationCenter, _ name: Notification.Name) {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.scheduleBringIslandToFrontBurst()
+                }
+            }
+            visibilityObserverTokens.append(token)
+        }
+
+        observe(NotificationCenter.default, NSApplication.didBecomeActiveNotification)
+        observe(NotificationCenter.default, NSApplication.didChangeScreenParametersNotification)
+        observe(NotificationCenter.default, NSApplication.didUnhideNotification)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.activeSpaceDidChangeNotification)
+
+        let spaceToken = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.spaces.displayLayoutChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleBringIslandToFrontBurst()
+            }
+        }
+        visibilityObserverTokens.append(spaceToken)
+    }
 
     func createPanel(with contentView: some View, onPillClick: @escaping () -> Void) {
-        let notch = NotchDetector.detect()
+        let notch = NotchDetector.layoutNotch()
 
-        let panelWidth: CGFloat = max(notch.notchWidth + 40, 800)
-        let panelHeight: CGFloat = 535
+        let panelWidth: CGFloat = max(notch.notchWidth + Self.panelExtraWidth, Self.panelMinWidth)
+        let panelHeight: CGFloat = Self.panelHeight
         let x = notch.rect.midX - panelWidth / 2
         let y = notch.screenFrame.maxY - panelHeight
 
@@ -36,8 +106,7 @@ final class PanelManager {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .screenSaver
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        applyIslandPanelSpaceChrome(panel)
         panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
 
@@ -53,18 +122,110 @@ final class PanelManager {
         self.panel = panel
         self.onPillClick = onPillClick
 
-        // Calculate pill rect in screen coordinates
-        let pillW = notch.notchWidth + 2
+        let occlusionToken = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleBringIslandToFrontBurst()
+            }
+        }
+        visibilityObserverTokens.append(occlusionToken)
+
+        let pillW = PillLayout.totalWidth(
+            notch: notch,
+            left: SettingsManager.shared.pillLeftSlot,
+            right: SettingsManager.shared.pillRightSlot
+        )
         let pillH = notch.notchHeight
         let pillX = notch.rect.midX - pillW / 2
         let pillY = notch.screenFrame.maxY - pillH
         self.pillRect = NSRect(x: pillX, y: pillY, width: pillW, height: pillH)
 
-        // Start monitoring clicks on the pill area
-        startPillClickMonitor()
+        restartPillMonitoringIfCollapsedState()
+    }
+
+    // MARK: - Panel frame + pill hit rect（与主屏刘海对齐，避免切换界面后窗口不跟走）
+
+    private static let panelHeight: CGFloat = 535
+    private static let panelExtraWidth: CGFloat = 40
+    private static let panelMinWidth: CGFloat = 800
+
+    private func updatePanelFrame(notch: NotchInfo) {
+        guard let panel else { return }
+        let panelWidth = max(notch.notchWidth + Self.panelExtraWidth, Self.panelMinWidth)
+        let x = notch.rect.midX - panelWidth / 2
+        let y = notch.screenFrame.maxY - Self.panelHeight
+        let newFrame = NSRect(x: x, y: y, width: panelWidth, height: Self.panelHeight)
+        if !Self.nsRectApproximatelyEqual(panel.frame, newFrame) {
+            panel.setFrame(newFrame, display: true)
+        }
+    }
+
+    private static func nsRectApproximatelyEqual(_ a: NSRect, _ b: NSRect) -> Bool {
+        abs(a.origin.x - b.origin.x) < 0.5
+            && abs(a.origin.y - b.origin.y) < 0.5
+            && abs(a.size.width - b.size.width) < 0.5
+            && abs(a.size.height - b.size.height) < 0.5
+    }
+
+    /// 仅按当前刘海把 NSPanel 挪回主屏顶边中（展开 / 收缩都需调用，否则台前调度后主窗口坐标会漂移）。
+    @MainActor
+    func repositionPanelWithNotchLayout(_ notch: NotchInfo) {
+        updatePanelFrame(notch: notch)
+    }
+
+    /// 收缩态：窗口位置 + pill 全局点击热区与 `IslandView` 一致。
+    @MainActor
+    func syncIslandPanelLayout(notch: NotchInfo, pillTotalWidth: CGFloat) {
+        updatePanelFrame(notch: notch)
+        setCollapsedPillRect(notch: notch, width: pillTotalWidth)
+    }
+
+    /// 从台前调度等场景恢复后重挂全局点击监听（系统偶发使 monitor 失效）。
+    func refreshCollapsedPillClickMonitoring() {
+        guard panel != nil else { return }
+        let s = SettingsManager.shared
+        guard s.islandEnabled, s.clickToExpand else { return }
+        guard panel?.ignoresMouseEvents == true else { return }
+        restartPillMonitoringIfCollapsedState()
     }
 
     // MARK: - State transitions
+
+    /// 与设置中的「开启灵动岛」「点击展开」等选项对齐。
+    func syncInteractionState(viewModel: IslandViewModel) {
+        let s = SettingsManager.shared
+        guard panel != nil else { return }
+
+        if !s.islandEnabled {
+            stopPillClickMonitor()
+            stopClickOutsideMonitor()
+            if viewModel.state == .expanded {
+                viewModel.forceCollapseForPanelSync()
+            }
+            panel?.orderOut(nil)
+            return
+        }
+
+        panel?.orderFrontRegardless()
+
+        let notch = NotchDetector.layoutNotch()
+        updatePanelFrame(notch: notch)
+
+        if viewModel.state == .expanded {
+            setExpanded()
+        } else {
+            setCollapsed()
+            let w = PillLayout.totalWidth(
+                notch: notch,
+                left: s.pillLeftSlot,
+                right: s.pillRightSlot
+            )
+            setCollapsedPillRect(notch: notch, width: w)
+        }
+    }
 
     func setExpanded() {
         panel?.ignoresMouseEvents = false
@@ -82,6 +243,13 @@ final class PanelManager {
         panel?.resignKey()
         panel?.ignoresMouseEvents = true
         panel?.hasShadow = false
+        restartPillMonitoringIfCollapsedState()
+    }
+
+    private func restartPillMonitoringIfCollapsedState() {
+        stopPillClickMonitor()
+        let s = SettingsManager.shared
+        guard s.islandEnabled, s.clickToExpand else { return }
         startPillClickMonitor()
     }
 
@@ -89,15 +257,18 @@ final class PanelManager {
 
     private func startPillClickMonitor() {
         stopPillClickMonitor()
-        pillClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+        // 未在系统设置中授权「辅助功能」时返回 nil，点击展开将不可用；回到前台时会通过 refreshCollapsedPillClickMonitoring 重试。
+        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
             guard let self = self else { return }
-            let screenPoint = NSEvent.mouseLocation
-            if self.pillRect.contains(screenPoint) {
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                guard SettingsManager.shared.islandEnabled, SettingsManager.shared.clickToExpand else { return }
+                let screenPoint = NSEvent.mouseLocation
+                if self.pillRect.contains(screenPoint) {
                     self.onPillClick?()
                 }
             }
         }
+        pillClickMonitor = monitor
     }
 
     private func stopPillClickMonitor() {
@@ -105,6 +276,15 @@ final class PanelManager {
             NSEvent.removeMonitor(monitor)
             pillClickMonitor = nil
         }
+    }
+
+    /// 收缩态热区宽度随左右信息槽变化时更新。
+    @MainActor
+    func setCollapsedPillRect(notch: NotchInfo, width: CGFloat) {
+        let pillH = notch.notchHeight
+        let pillX = notch.rect.midX - width / 2
+        let pillY = notch.screenFrame.maxY - pillH
+        pillRect = NSRect(x: pillX, y: pillY, width: width, height: pillH)
     }
 
     // MARK: - Click outside monitoring (expanded state)
@@ -119,7 +299,7 @@ final class PanelManager {
             guard let panel = self?.panel else { return }
             let screenPoint = NSEvent.mouseLocation
             if !panel.frame.contains(screenPoint) {
-                onClickOutside()
+                DispatchQueue.main.async(execute: onClickOutside)
             }
         }
         // Local monitor: clicks in other windows of this app (e.g. settings)

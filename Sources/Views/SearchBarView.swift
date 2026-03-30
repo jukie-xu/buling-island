@@ -8,12 +8,13 @@ struct SearchBarView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
+                .foregroundColor(.white.opacity(0.55))
                 .font(.system(size: 14))
 
             TextField("搜索应用...", text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
+                .foregroundColor(.white)
                 .focused($isFocused)
 
             if !text.isEmpty {
@@ -21,7 +22,7 @@ struct SearchBarView: View {
                     text = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.45))
                         .font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
@@ -31,7 +32,7 @@ struct SearchBarView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(0.06))
+                .fill(Color.white.opacity(0.12))
         )
         .onAppear {
             isFocused = true

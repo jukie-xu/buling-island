@@ -3,6 +3,7 @@ import SwiftUI
 struct AppItemView: View {
 
     let app: AppInfo
+    @Environment(\.useLightContentOnIslandPanel) private var lightOnDarkIsland
     @State private var isHovering = false
 
     var body: some View {
@@ -16,7 +17,7 @@ struct AppItemView: View {
                 .font(.system(size: 11))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .foregroundColor(.primary)
+                .foregroundColor(lightOnDarkIsland ? Color.white.opacity(0.9) : Color.primary)
         }
         .frame(width: 90, height: 96)
         .contentShape(Rectangle())
@@ -25,7 +26,11 @@ struct AppItemView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(isHovering ? 0.08 : 0))
+                .fill(
+                    lightOnDarkIsland
+                        ? Color.white.opacity(isHovering ? 0.12 : 0)
+                        : Color.primary.opacity(isHovering ? 0.08 : 0)
+                )
         )
     }
 }

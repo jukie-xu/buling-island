@@ -4,18 +4,23 @@ struct AppGridView: View {
 
     let apps: [AppInfo]
     let onAppTap: (AppInfo) -> Void
+    @Environment(\.useLightContentOnIslandPanel) private var lightOnDarkIsland
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+
+    private var emptySecondary: Color {
+        lightOnDarkIsland ? Color.white.opacity(0.45) : Color.secondary
+    }
 
     var body: some View {
         if apps.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "app.dashed")
                     .font(.system(size: 32))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(emptySecondary)
                 Text("没有找到应用")
                     .font(.system(size: 13))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(emptySecondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {

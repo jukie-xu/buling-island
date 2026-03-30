@@ -4,6 +4,7 @@ struct FolderItemView: View {
 
     let folder: AppFolder
     let allApps: [AppInfo]
+    @Environment(\.useLightContentOnIslandPanel) private var lightOnDarkIsland
     @State private var isHovering = false
 
     private var previewApps: [AppInfo] {
@@ -17,7 +18,7 @@ struct FolderItemView: View {
             // 3x3 mini icon grid
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.primary.opacity(0.06))
+                    .fill(lightOnDarkIsland ? Color.white.opacity(0.1) : Color.primary.opacity(0.06))
                     .frame(width: 64, height: 64)
 
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(16), spacing: 2), count: 3), spacing: 2) {
@@ -34,7 +35,7 @@ struct FolderItemView: View {
                 .font(.system(size: 11))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .foregroundColor(.primary)
+                .foregroundColor(lightOnDarkIsland ? Color.white.opacity(0.9) : Color.primary)
         }
         .frame(width: 90, height: 96)
         .contentShape(Rectangle())
@@ -43,7 +44,11 @@ struct FolderItemView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(isHovering ? 0.08 : 0))
+                .fill(
+                    lightOnDarkIsland
+                        ? Color.white.opacity(isHovering ? 0.12 : 0)
+                        : Color.primary.opacity(isHovering ? 0.08 : 0)
+                )
         )
     }
 }

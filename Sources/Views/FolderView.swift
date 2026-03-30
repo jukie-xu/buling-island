@@ -106,6 +106,7 @@ struct FolderView: View {
                     .coordinateSpace(name: "folderGrid")
                 }
             }
+            .environment(\.useLightContentOnIslandPanel, false)
             .frame(width: 380, height: 400)
             .background(
                 RoundedRectangle(cornerRadius: 16)
