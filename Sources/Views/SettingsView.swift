@@ -564,42 +564,56 @@ struct AnimationSettingsTab: View {
                     .frame(width: 70, height: 12)
 
                 if previewExpanded {
-                    VStack(spacing: 6) {
-                        Spacer().frame(height: 14)
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
-                            .frame(width: 120, height: 14)
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(Color.primary.opacity(0.04))
-                            .frame(width: 120, height: 10)
-                        HStack(spacing: 8) {
-                            ForEach(0..<4, id: \.self) { _ in
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(Color.accentColor.opacity(0.2))
-                                    .frame(width: 24, height: 24)
+                    VStack(spacing: 0) {
+                        // Top bar (matches real panel: flush to top)
+                        Color.clear
+                            .frame(height: 14)
+
+                        Rectangle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(height: 1)
+                            .padding(.horizontal, 16)
+
+                        VStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                                .frame(height: 24)
+                            HStack(spacing: 10) {
+                                ForEach(0..<4, id: \.self) { _ in
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(Color.white.opacity(0.12))
+                                        .frame(width: 28, height: 28)
+                                }
                             }
                         }
-                        .padding(.top, 4)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                        .padding(.bottom, 12)
                     }
-                    .frame(width: 160, height: 110)
+                    .frame(width: 196, height: 122)
                     .background(
-                        TangentFilletBottomRectangle(bottomFilletRadius: 10)
-                            .fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.04))
-                            .overlay(
-                                TangentFilletBottomRectangle(bottomFilletRadius: 10)
-                                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
-                            )
+                        ExpandedIslandPanelShape(topConvexRadius: 16, bottomFilletRadius: 16)
+                            .fill(Color.black, style: FillStyle(antialiased: false))
+                            .shadow(color: .black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 8, y: 3)
                     )
-                    .clipShape(TangentFilletBottomRectangle(bottomFilletRadius: 10))
+                    .clipShape(ExpandedIslandPanelShape(topConvexRadius: 16, bottomFilletRadius: 16))
                     .transition(IslandPanelViewTransition.settingsPreviewExpanded)
                 } else {
-                    TangentFilletBottomRectangle(bottomFilletRadius: 6)
-                        .fill(pillColor.opacity(0.05))
-                        .overlay(
-                            TangentFilletBottomRectangle(bottomFilletRadius: 6)
-                                .strokeBorder(pillColor.opacity(0.15), lineWidth: 1)
-                        )
-                        .frame(width: 76, height: 14)
+                    let baseCoreWidth: CGFloat = 132
+                    let baseNotchHeight: CGFloat = 15
+                    let pillH = baseNotchHeight + settings.pillVisualHeightOverhang
+                    let pillW = baseCoreWidth + 2 * settings.pillVisualWidthOverhang
+                    let pillShape = FlaredTopTangentBottomRectangle(
+                        topConvexRadius: settings.pillFlareRadius,
+                        topCornerFlare: 0.52,
+                        bottomFilletRadius: 12,
+                        bodyInsetX: settings.pillVisualWidthOverhang
+                    )
+
+                    pillShape
+                        .fill(Color.black, style: FillStyle(antialiased: false))
+                        .frame(width: pillW, height: pillH)
+                        .offset(y: -settings.pillVisualHeightOverhang / 2)
                         .transition(IslandPanelViewTransition.settingsPreviewCollapsed)
                 }
             }
@@ -640,9 +654,13 @@ struct AnimationSettingsTab: View {
                 Text(title).font(.system(size: 13, weight: .medium)).foregroundColor(.secondary)
                 Spacer()
             }
-            VStack(spacing: 4) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(allCases) { item in
-                    radioRow(label: item.displayName, isSelected: item == selection.wrappedValue) {
+                    animationOptionCard(
+                        title: item.displayName,
+                        detail: item.detail,
+                        isSelected: item == selection.wrappedValue
+                    ) {
                         selection.wrappedValue = item
                     }
                 }
@@ -662,9 +680,13 @@ struct AnimationSettingsTab: View {
                 Text(title).font(.system(size: 13, weight: .medium)).foregroundColor(.secondary)
                 Spacer()
             }
-            VStack(spacing: 4) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(allCases) { item in
-                    radioRow(label: item.displayName, isSelected: item == selection.wrappedValue) {
+                    animationOptionCard(
+                        title: item.displayName,
+                        detail: item.detail,
+                        isSelected: item == selection.wrappedValue
+                    ) {
                         selection.wrappedValue = item
                     }
                 }
@@ -672,18 +694,40 @@ struct AnimationSettingsTab: View {
         }
     }
 
-    private func radioRow(label: String, isSelected: Bool, onTap: @escaping () -> Void) -> some View {
-        HStack {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 14))
-                .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
-            Text(label).font(.system(size: 13)).foregroundColor(.primary)
-            Spacer()
+    private func animationOptionCard(
+        title: String,
+        detail: String,
+        isSelected: Bool,
+        onTap: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.55))
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear))
-        .contentShape(Rectangle())
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(colorScheme == .dark ? 0.16 : 0.10) : Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture { onTap() }
     }
 }
@@ -694,6 +738,9 @@ struct LayoutSettingsTab: View {
 
     @ObservedObject var settings: SettingsManager
     @State private var showResetConfirm = false
+    @State private var selectedSmartMergePreset: FolderManager.SmartMergePreset = .byFunction
+    @State private var showSmartMergeConfirm = false
+    @State private var isSmartMerging = false
 
     var body: some View {
         ScrollView {
@@ -702,6 +749,7 @@ struct LayoutSettingsTab: View {
                 pillInfoSlotsSection
 
                 if settings.displayMode == .launchpad {
+                    smartMergeSection
                     resetSection
                 }
             }
@@ -796,6 +844,89 @@ struct LayoutSettingsTab: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private var smartMergeSection: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Text("Launchpad 智能合并")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("分组维度")
+                        .font(.system(size: 13))
+                        .foregroundColor(.primary)
+                    Text(selectedSmartMergePreset.detail)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Picker("分组维度", selection: $selectedSmartMergePreset) {
+                    ForEach(FolderManager.SmartMergePreset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+
+            Button {
+                showSmartMergeConfirm = true
+            } label: {
+                HStack {
+                    if isSmartMerging {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12))
+                    }
+                    Text(isSmartMerging ? "处理中…" : "一键智能合并")
+                        .font(.system(size: 13))
+                }
+                .foregroundColor(.accentColor)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12)))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSmartMerging)
+            .alert("确认智能合并？", isPresented: $showSmartMergeConfirm) {
+                Button("取消", role: .cancel) { }
+                Button("开始", role: .destructive) {
+                    runSmartMerge()
+                }
+            } message: {
+                Text("将按所选维度重建当前 Launchpad 布局（会覆盖现有文件夹排列）。")
+            }
+
+            Text("根据预设维度批量分组应用；不会删除应用，只会重建文件夹与网格顺序。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func runSmartMerge() {
+        guard !isSmartMerging else { return }
+        isSmartMerging = true
+        let preset = selectedSmartMergePreset
+        DispatchQueue.global(qos: .userInitiated).async {
+            let apps = AppDiscoveryService.shared.discoverApps()
+            DispatchQueue.main.async {
+                FolderManager.shared.smartMergeApps(apps, preset: preset)
+                isSmartMerging = false
             }
         }
     }

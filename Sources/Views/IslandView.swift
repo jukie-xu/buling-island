@@ -67,7 +67,10 @@ struct IslandView: View {
                     .allowsHitTesting(viewModel.state == .expanded)
             }
             .clipShape(morphShape, style: FillStyle(antialiased: false))
-            .animation(settings.expandAnimation.animation, value: viewModel.state)
+            .animation(
+                viewModel.state == .expanded ? settings.expandAnimation.animation : settings.collapseAnimation.animation,
+                value: viewModel.state
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {

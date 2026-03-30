@@ -117,7 +117,7 @@ struct LaunchpadGridView: View {
         .onAppear {
             folderManager.buildLayoutIfNeeded(from: allApps)
         }
-        .onChange(of: allApps.count) { _ in
+        .onChange(of: allApps) { _ in
             folderManager.buildLayoutIfNeeded(from: allApps)
         }
     }

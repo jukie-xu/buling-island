@@ -28,8 +28,6 @@ enum IslandPanelViewTransition {
 
 enum ExpandAnimation: String, CaseIterable, Identifiable {
     case spring
-    case easeOut
-    case bouncy
     case snappy
     case smooth
 
@@ -38,18 +36,22 @@ enum ExpandAnimation: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .spring: return "弹性展开"
-        case .easeOut: return "平滑展开"
-        case .bouncy: return "弹跳展开"
         case .snappy: return "快速弹出"
         case .smooth: return "柔和展开"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .spring: return "有弹性，稳定耐看"
+        case .snappy: return "响应更快、更利落"
+        case .smooth: return "更慢、更柔和"
         }
     }
 
     var animation: Animation {
         switch self {
         case .spring: return .spring(response: 0.35, dampingFraction: 0.8)
-        case .easeOut: return .easeOut(duration: 0.3)
-        case .bouncy: return .spring(response: 0.4, dampingFraction: 0.6)
         case .snappy: return .spring(response: 0.2, dampingFraction: 0.9)
         case .smooth: return .easeInOut(duration: 0.5)
         }
@@ -60,8 +62,6 @@ enum ExpandAnimation: String, CaseIterable, Identifiable {
 
 enum CollapseAnimation: String, CaseIterable, Identifiable {
     case spring
-    case easeIn
-    case bouncy
     case snappy
     case smooth
 
@@ -70,18 +70,22 @@ enum CollapseAnimation: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .spring: return "弹性收回"
-        case .easeIn: return "平滑收回"
-        case .bouncy: return "弹跳收回"
         case .snappy: return "快速收回"
         case .smooth: return "柔和收回"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .spring: return "有弹性，回收自然"
+        case .snappy: return "更快、更干脆"
+        case .smooth: return "更慢、更柔和"
         }
     }
 
     var animation: Animation {
         switch self {
         case .spring: return .spring(response: 0.3, dampingFraction: 0.85)
-        case .easeIn: return .easeIn(duration: 0.25)
-        case .bouncy: return .spring(response: 0.35, dampingFraction: 0.6)
         case .snappy: return .spring(response: 0.15, dampingFraction: 0.9)
         case .smooth: return .easeInOut(duration: 0.45)
         }

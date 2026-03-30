@@ -52,13 +52,6 @@ final class IslandViewModel: ObservableObject {
     init() {
         startWatchingApplicationsFolders()
         loadApps()
-        // 兜底：某些启动/重启后的早期时刻可能拿到空列表（Spotlight/目录尚未就绪），稍后再补拉一次。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self else { return }
-            if self.allApps.isEmpty {
-                self.loadApps()
-            }
-        }
     }
 
     func loadApps() {
@@ -82,8 +75,8 @@ final class IslandViewModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoadingApps = false
-                // 防抖：避免偶发读取失败导致把已有列表清空（会造成面板“空白”）。
-                if !apps.isEmpty || self.allApps.isEmpty {
+                // 启动早期会偶发目录索引未就绪：优先保留更完整的列表，避免“首次打开缺失/空白”。
+                if self.allApps.isEmpty || apps.count >= self.allApps.count {
                     self.allApps = apps
                 }
             }

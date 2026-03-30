@@ -6,6 +6,30 @@ final class FolderManager: ObservableObject {
 
     static let shared = FolderManager()
 
+    enum SmartMergePreset: String, CaseIterable, Identifiable {
+        case byFunction
+        case byVendor
+        case byInitial
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .byFunction: return "按用途"
+            case .byVendor: return "按开发者"
+            case .byInitial: return "按首字母"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .byFunction: return "浏览器/开发/社交/影音等分组"
+            case .byVendor: return "按厂商归类（Apple/Google 等）"
+            case .byInitial: return "按应用名称首字母分段"
+            }
+        }
+    }
+
     @Published var folders: [AppFolder] = []
     @Published var layout: [LaunchpadItem] = []
 
@@ -57,7 +81,25 @@ final class FolderManager: ObservableObject {
     // MARK: - Build layout from apps
 
     func buildLayoutIfNeeded(from apps: [AppInfo]) {
+        // Root-cause fix:
+        // Startup early-phase may transiently return an empty app list.
+        // Treating that as "all apps uninstalled" would wipe Launchpad layout.
+        guard !apps.isEmpty else { return }
+
         let currentAppIDs = Set(apps.map { $0.id })
+        var changed = false
+
+        // Self-heal: remove stale folder slots whose folder payload is missing/corrupted.
+        let beforeInvalidFolderCleanup = layout.count
+        layout.removeAll { item in
+            if case .folder(let uuid) = item, folder(for: uuid) == nil {
+                return true
+            }
+            return false
+        }
+        if layout.count != beforeInvalidFolderCleanup {
+            changed = true
+        }
 
         if layout.isEmpty {
             layout = apps.map { .app($0.id) }
@@ -76,8 +118,6 @@ final class FolderManager: ObservableObject {
                 }
             }
         }
-
-        var changed = false
 
         // Add newly installed apps to the end of layout
         for app in apps where !knownAppIDs.contains(app.id) {
@@ -284,7 +324,191 @@ final class FolderManager: ObservableObject {
         saveLayout()
     }
 
+    func smartMergeApps(_ apps: [AppInfo], preset: SmartMergePreset) {
+        let uniqueApps = dedupeAppsByID(apps)
+        guard !uniqueApps.isEmpty else { return }
+
+        // 系统自带应用先聚类（1～2 个文件夹），避免 Safari 等再被拆进「浏览器」或按首字母打散。
+        let builtInClusters = builtInMacOSClusters(from: uniqueApps)
+        let builtInIDs = Set(builtInClusters.flatMap(\.appIDs))
+        let appsForPreset = uniqueApps.filter { !builtInIDs.contains($0.id) }
+
+        let presetGrouped: [(name: String, appIDs: [String])]
+        switch preset {
+        case .byFunction:
+            presetGrouped = groupByFunction(appsForPreset)
+        case .byVendor:
+            presetGrouped = groupByVendor(appsForPreset)
+        case .byInitial:
+            presetGrouped = groupByInitial(appsForPreset)
+        }
+
+        let grouped = builtInClusters + presetGrouped
+
+        var newFolders: [AppFolder] = []
+        var newLayout: [LaunchpadItem] = []
+        var groupedIDs = Set<String>()
+
+        for g in grouped {
+            let ids = Array(Set(g.appIDs)).sorted()
+            guard ids.count >= 2 else { continue }
+            let folder = AppFolder(name: g.name, appIDs: ids)
+            newFolders.append(folder)
+            newLayout.append(.folder(folder.id))
+            groupedIDs.formUnion(ids)
+        }
+
+        for app in uniqueApps where !groupedIDs.contains(app.id) {
+            newLayout.append(.app(app.id))
+        }
+
+        folders = newFolders
+        layout = newLayout
+        saveFolders()
+        saveLayout()
+    }
+
     func folder(for id: UUID) -> AppFolder? {
         folders.first { $0.id == id }
+    }
+
+    // MARK: - Smart merge helpers
+
+    private func dedupeAppsByID(_ apps: [AppInfo]) -> [AppInfo] {
+        var seen = Set<String>()
+        return apps.filter { seen.insert($0.id).inserted }
+    }
+
+    /// `com.apple.*` 与安装在 `/System/Applications` 下的应用视为 macOS 系统自带。
+    private func isBuiltInMacOSApp(_ app: AppInfo) -> Bool {
+        let id = app.id.lowercased()
+        if id.hasPrefix("com.apple.") { return true }
+        return app.path.path.lowercased().hasPrefix("/system/applications")
+    }
+
+    /// 至少 2 个自带应用才成文件夹。尽量拆成「系统实用工具」与「macOS 自带应用」；不足两类的余项并入较多的一类。
+    private func builtInMacOSClusters(from apps: [AppInfo]) -> [(name: String, appIDs: [String])] {
+        let builtIn = apps.filter { isBuiltInMacOSApp($0) }
+        guard builtIn.count >= 2 else { return [] }
+
+        var utilIDs: [String] = []
+        var otherIDs: [String] = []
+        for app in builtIn {
+            if app.path.path.contains("/Applications/Utilities/") {
+                utilIDs.append(app.id)
+            } else {
+                otherIDs.append(app.id)
+            }
+        }
+
+        var folders: [(String, [String])] = []
+        if utilIDs.count >= 2 {
+            folders.append(("系统实用工具", utilIDs))
+        }
+        if otherIDs.count >= 2 {
+            folders.append(("macOS 自带应用", otherIDs))
+        }
+
+        if folders.isEmpty {
+            return [("macOS 自带应用", builtIn.map(\.id))]
+        }
+
+        let assigned = Set(folders.flatMap(\.1))
+        let orphans = builtIn.map(\.id).filter { !assigned.contains($0) }
+        guard !orphans.isEmpty else { return folders }
+
+        guard let maxIdx = folders.indices.max(by: { folders[$0].1.count < folders[$1].1.count }) else {
+            return folders
+        }
+        var merged = folders
+        let name = merged[maxIdx].0
+        merged[maxIdx] = (name, merged[maxIdx].1 + orphans)
+        return merged
+    }
+
+    private func groupByFunction(_ apps: [AppInfo]) -> [(name: String, appIDs: [String])] {
+        let buckets: [(name: String, keywords: [String])] = [
+            ("浏览器", ["safari", "chrome", "edge", "firefox", "brave", "opera", "vivaldi", "browser"]),
+            ("开发工具", ["xcode", "terminal", "iterm", "code", "android studio", "docker", "postman", "intellij", "pycharm", "goland", "webstorm"]),
+            ("社交沟通", ["wechat", "weixin", "qq", "slack", "discord", "telegram", "teams", "zoom", "feishu", "lark"]),
+            ("影音播放", ["music", "tv", "quicktime", "iina", "vlc", "spotify", "netflix", "bilibili", "video", "player"]),
+            ("办公效率", ["word", "excel", "powerpoint", "notion", "obsidian", "calendar", "reminders", "mail", "pages", "numbers", "keynote"]),
+            ("设计创作", ["photoshop", "illustrator", "figma", "sketch", "pixelmator", "premiere", "after effects", "davinci"]),
+            ("系统工具", ["system settings", "activity monitor", "disk utility", "finder", "preview", "shortcuts", "automator"]),
+        ]
+
+        var grouped: [String: [String]] = [:]
+        for app in apps {
+            let text = "\(app.name.lowercased()) \(app.pinyinFull) \(app.id.lowercased())"
+            if let hit = buckets.first(where: { b in
+                b.keywords.contains { text.contains($0) }
+            }) {
+                grouped[hit.name, default: []].append(app.id)
+            }
+        }
+
+        return buckets.compactMap { bucket in
+            guard let ids = grouped[bucket.name], ids.count >= 2 else { return nil }
+            return (bucket.name, ids)
+        }
+    }
+
+    private func groupByVendor(_ apps: [AppInfo]) -> [(name: String, appIDs: [String])] {
+        var grouped: [String: [String]] = [:]
+        for app in apps {
+            let key = vendorName(forBundleID: app.id)
+            guard !key.isEmpty else { continue }
+            grouped[key, default: []].append(app.id)
+        }
+        return grouped
+            .filter { $0.value.count >= 2 }
+            .map { ($0.key, $0.value) }
+            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
+    }
+
+    private func vendorName(forBundleID bundleID: String) -> String {
+        let lower = bundleID.lowercased()
+        let known: [(String, String)] = [
+            ("com.apple.", "Apple"),
+            ("com.microsoft.", "Microsoft"),
+            ("com.google.", "Google"),
+            ("org.mozilla.", "Mozilla"),
+            ("com.tencent.", "腾讯"),
+            ("com.bytedance.", "字节跳动"),
+            ("com.adobe.", "Adobe"),
+            ("com.jetbrains.", "JetBrains"),
+        ]
+        if let hit = known.first(where: { lower.hasPrefix($0.0) }) {
+            return hit.1
+        }
+        let parts = bundleID.split(separator: ".")
+        guard parts.count >= 2 else { return "" }
+        return String(parts[1]).capitalized
+    }
+
+    private func groupByInitial(_ apps: [AppInfo]) -> [(name: String, appIDs: [String])] {
+        let ranges: [(name: String, letters: ClosedRange<Character>)] = [
+            ("A-F", "A"..."F"),
+            ("G-L", "G"..."L"),
+            ("M-R", "M"..."R"),
+            ("S-Z", "S"..."Z"),
+        ]
+
+        var grouped: [String: [String]] = ["#": []]
+        for app in apps {
+            let first = app.pinyinFull.uppercased().first ?? "#"
+            if let range = ranges.first(where: { $0.letters.contains(first) }) {
+                grouped[range.name, default: []].append(app.id)
+            } else {
+                grouped["#", default: []].append(app.id)
+            }
+        }
+
+        var out: [(String, [String])] = []
+        for r in ranges {
+            if let ids = grouped[r.name], ids.count >= 2 { out.append((r.name, ids)) }
+        }
+        if let ids = grouped["#"], ids.count >= 2 { out.append(("#", ids)) }
+        return out
     }
 }
