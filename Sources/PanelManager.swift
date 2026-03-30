@@ -36,6 +36,7 @@ final class PanelManager {
     private var visibilityObserverTokens: [NSObjectProtocol] = []
     private var pendingBringFrontTasks: [DispatchWorkItem] = []
     private var clickOutsideMonitorGeneration: UInt64 = 0
+    private var isCollapsedPillHiddenForFullscreen: Bool = false
 
     private init() {
         installIslandVisibilityObservers()
@@ -74,8 +75,32 @@ final class PanelManager {
 
     private func bringIslandPanelsToFrontNow() {
         guard SettingsManager.shared.islandEnabled, let panel else { return }
+        guard !(panel.ignoresMouseEvents && isCollapsedPillHiddenForFullscreen) else { return }
         applyIslandPanelSpaceChrome(panel)
         panel.orderFrontRegardless()
+    }
+
+    /// 仅用于「收缩态 pill」在全屏等场景下临时隐藏：不影响展开态。
+    /// 隐藏时会把 panel `orderOut` 并停掉全局 pill 点击监听；恢复时重新 `orderFrontRegardless` 并按当前 notch 同步热区。
+    @MainActor
+    func setCollapsedPillHiddenForFullscreen(_ hidden: Bool) {
+        guard isCollapsedPillHiddenForFullscreen != hidden else { return }
+        isCollapsedPillHiddenForFullscreen = hidden
+
+        guard let panel else { return }
+        if hidden {
+            stopPillClickMonitor()
+            if panel.ignoresMouseEvents { // only collapse state
+                panel.orderOut(nil)
+            }
+        } else {
+            if SettingsManager.shared.islandEnabled {
+                panel.orderFrontRegardless()
+                let notch = NotchDetector.layoutNotch()
+                updatePanelFrame(notch: notch)
+            }
+            restartPillMonitoringIfCollapsedState()
+        }
     }
 
     private func installIslandVisibilityObservers() {
@@ -229,6 +254,14 @@ final class PanelManager {
             return
         }
 
+        // Fullscreen auto-hide takes precedence only for collapsed state.
+        if viewModel.state == .collapsed, isCollapsedPillHiddenForFullscreen {
+            stopPillClickMonitor()
+            stopClickOutsideMonitor()
+            panel?.orderOut(nil)
+            return
+        }
+
         panel?.orderFrontRegardless()
 
         let notch = NotchDetector.layoutNotch()
@@ -248,6 +281,8 @@ final class PanelManager {
     }
 
     func setExpanded() {
+        // Expand should always show panel.
+        isCollapsedPillHiddenForFullscreen = false
         panel?.ignoresMouseEvents = false
         panel?.hasShadow = true
         panel?.makeKeyAndOrderFront(nil)
@@ -271,7 +306,13 @@ final class PanelManager {
         panel?.resignKey()
         panel?.ignoresMouseEvents = true
         panel?.hasShadow = false
-        restartPillMonitoringIfCollapsedState()
+        if isCollapsedPillHiddenForFullscreen {
+            stopPillClickMonitor()
+            panel?.orderOut(nil)
+        } else {
+            panel?.orderFrontRegardless()
+            restartPillMonitoringIfCollapsedState()
+        }
     }
 
     private func restartPillMonitoringIfCollapsedState() {

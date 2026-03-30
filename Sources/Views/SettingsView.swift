@@ -210,6 +210,11 @@ private struct SettingsDashboardTab: View {
                     isOn: $settings.islandEnabled
                 )
                 toggleCard(
+                    title: "全屏时隐藏 pill",
+                    caption: "检测到前台全屏后自动隐藏收缩态 pill",
+                    isOn: $settings.autoHideCollapsedPillInFullscreen
+                )
+                toggleCard(
                     title: "开机启动",
                     caption: "登录 macOS 时自动启动",
                     isOn: Binding(

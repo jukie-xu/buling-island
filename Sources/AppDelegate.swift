@@ -5,6 +5,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var islandViewModel = IslandViewModel()
+    private var fullscreenAutoHider: FullscreenCollapsedPillAutoHider?
 
     override init() {
         super.init()
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.islandViewModel.toggle()
         }
         PanelManager.shared.syncInteractionState(viewModel: islandViewModel)
+        fullscreenAutoHider = FullscreenCollapsedPillAutoHider(viewModel: islandViewModel)
     }
 }
 

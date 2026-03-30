@@ -18,6 +18,7 @@ final class SettingsManager: ObservableObject {
     private let displayModeKey = "displayMode"
     private let islandEnabledKey = "islandEnabled"
     private let clickToExpandKey = "clickToExpand"
+    private let autoHideCollapsedPillInFullscreenKey = "autoHideCollapsedPillInFullscreen"
     private let pillLeftSlotKey = "pillLeftSlot"
     private let pillRightSlotKey = "pillRightSlot"
     private let pillFlareRadiusKey = "pillFlareRadius"
@@ -58,6 +59,14 @@ final class SettingsManager: ObservableObject {
     @Published var clickToExpand: Bool {
         didSet {
             UserDefaults.standard.set(clickToExpand, forKey: clickToExpandKey)
+            NotificationCenter.default.post(name: .panelInteractionPrefsDidChange, object: nil)
+        }
+    }
+
+    /// 全屏场景下自动隐藏收缩态 pill（仅收缩态；展开面板不受影响）。
+    @Published var autoHideCollapsedPillInFullscreen: Bool {
+        didSet {
+            UserDefaults.standard.set(autoHideCollapsedPillInFullscreen, forKey: autoHideCollapsedPillInFullscreenKey)
             NotificationCenter.default.post(name: .panelInteractionPrefsDidChange, object: nil)
         }
     }
@@ -109,6 +118,7 @@ final class SettingsManager: ObservableObject {
 
         self.islandEnabled = UserDefaults.standard.object(forKey: islandEnabledKey) as? Bool ?? true
         self.clickToExpand = UserDefaults.standard.object(forKey: clickToExpandKey) as? Bool ?? true
+        self.autoHideCollapsedPillInFullscreen = UserDefaults.standard.object(forKey: autoHideCollapsedPillInFullscreenKey) as? Bool ?? false
 
         let leftRaw = UserDefaults.standard.string(forKey: pillLeftSlotKey) ?? ""
         self.pillLeftSlot = PillSideWidget(rawValue: leftRaw) ?? .none
