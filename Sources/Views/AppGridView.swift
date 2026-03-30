@@ -6,7 +6,7 @@ struct AppGridView: View {
     let onAppTap: (AppInfo) -> Void
     @Environment(\.useLightContentOnIslandPanel) private var lightOnDarkIsland
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+    private let columnCount = 4
 
     private var emptySecondary: Color {
         lightOnDarkIsland ? Color.white.opacity(0.45) : Color.secondary
@@ -25,14 +25,28 @@ struct AppGridView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView(.vertical, showsIndicators: true) {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(apps) { app in
-                        AppItemView(app: app)
-                            .onTapGesture {
-                                onAppTap(app)
+                // 非惰性行布局（替代 LazyVGrid）；末行不足 4 个时仍占满四列网格，与上行列对齐。
+                let rowCount = (apps.count + columnCount - 1) / columnCount
+                VStack(alignment: .center, spacing: 16) {
+                    ForEach(0..<rowCount, id: \.self) { row in
+                        HStack(spacing: 12) {
+                            ForEach(0..<columnCount, id: \.self) { col in
+                                let idx = row * columnCount + col
+                                Group {
+                                    if idx < apps.count {
+                                        AppItemView(app: apps[idx])
+                                            .onTapGesture { onAppTap(apps[idx]) }
+                                    } else {
+                                        Color.clear
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
                             }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             }

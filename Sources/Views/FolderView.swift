@@ -20,7 +20,7 @@ struct FolderView: View {
     @State private var dragStartLocation: CGPoint = .zero
     @State private var appFrames: [String: CGRect] = [:]
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+    private let columnCount = 3
 
     init(folder: AppFolder, allApps: [AppInfo], isEditing: Bool,
          folderManager: FolderManager,
@@ -77,14 +77,30 @@ struct FolderView: View {
                         }
                 }
 
-                // Apps grid
+                // Apps grid：满行三等分；末行不足 3 个时仍占满列槽，与上行对齐。
                 ScrollView {
                     ZStack {
-                        LazyVGrid(columns: columns, spacing: 20) {
-                            ForEach(folderApps) { app in
-                                folderAppCell(app: app)
+                        let apps = folderApps
+                        let rowCount = apps.isEmpty ? 0 : (apps.count + columnCount - 1) / columnCount
+                        VStack(alignment: .center, spacing: 20) {
+                            ForEach(0..<rowCount, id: \.self) { row in
+                                HStack(spacing: 20) {
+                                    ForEach(0..<columnCount, id: \.self) { col in
+                                        let i = row * columnCount + col
+                                        Group {
+                                            if i < apps.count {
+                                                folderAppCell(app: apps[i])
+                                            } else {
+                                                Color.clear
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
                         .animation(.easeInOut(duration: 0.15), value: folder.appIDs)
@@ -104,6 +120,7 @@ struct FolderView: View {
                         }
                     }
                     .coordinateSpace(name: "folderGrid")
+                    .clipped()
                 }
             }
             .environment(\.useLightContentOnIslandPanel, false)

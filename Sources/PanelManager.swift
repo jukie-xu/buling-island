@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+/// `NSHostingView` 默认会把 fitting / 内容尺寸参与窗口布局；展开态内含 `ScrollView`+`LazyVGrid` 时，
+/// 与 `NSHostingView.updateAnimatedWindowSize(_:)`、`windowDidLayout` 叠在一起会在部分系统上形成展示周期死循环
+///（崩溃栈里 `__reusableDependencyContextForKey` / `NSScrollView setNeedsLayout` 递归）。
+private final class IslandPanelHostingView<Content: View>: NSHostingView<Content> {
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    /// 切断「理想 fitting 尺寸 → `updateAnimatedWindowSize` → 改窗口/scroll 帧」回路：始终声明与当前 bounds 一致。
+    override var fittingSize: NSSize {
+        let s = bounds.size
+        if s.width > 4, s.height > 4 { return s }
+        return super.fittingSize
+    }
+}
+
 /// NSPanel that can become key window (needed for text field input).
 final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -18,6 +35,7 @@ final class PanelManager {
     private var onPillClick: (() -> Void)?
     private var visibilityObserverTokens: [NSObjectProtocol] = []
     private var pendingBringFrontTasks: [DispatchWorkItem] = []
+    private var clickOutsideMonitorGeneration: UInt64 = 0
 
     private init() {
         installIslandVisibilityObservers()
@@ -88,10 +106,10 @@ final class PanelManager {
         visibilityObserverTokens.append(spaceToken)
     }
 
-    func createPanel(with contentView: some View, onPillClick: @escaping () -> Void) {
+    func createPanel<Content: View>(with contentView: Content, onPillClick: @escaping () -> Void) {
         let notch = NotchDetector.layoutNotch()
 
-        let panelWidth: CGFloat = max(notch.notchWidth + Self.panelExtraWidth, Self.panelMinWidth)
+        let panelWidth: CGFloat = max(notch.notchWidth + Self.panelExtraWidth, Self.panelMinWidth) + 2 * Self.topCornerOverhang
         let panelHeight: CGFloat = Self.panelHeight
         let x = notch.rect.midX - panelWidth / 2
         let y = notch.screenFrame.maxY - panelHeight
@@ -113,7 +131,7 @@ final class PanelManager {
         // Start collapsed: ignore mouse events on the panel itself
         panel.ignoresMouseEvents = true
 
-        let hostingView = NSHostingView(rootView: contentView)
+        let hostingView = IslandPanelHostingView(rootView: contentView)
         hostingView.frame = panel.contentView?.bounds ?? .zero
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
@@ -138,9 +156,9 @@ final class PanelManager {
             left: SettingsManager.shared.pillLeftSlot,
             right: SettingsManager.shared.pillRightSlot
         )
-        let pillH = notch.notchHeight
+        let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
         let pillX = notch.rect.midX - pillW / 2
-        let pillY = notch.screenFrame.maxY - pillH
+        let pillY = notch.screenFrame.maxY - pillH + PillLayout.visualHeightOverhang / 2
         self.pillRect = NSRect(x: pillX, y: pillY, width: pillW, height: pillH)
 
         restartPillMonitoringIfCollapsedState()
@@ -151,10 +169,12 @@ final class PanelManager {
     private static let panelHeight: CGFloat = 535
     private static let panelExtraWidth: CGFloat = 40
     private static let panelMinWidth: CGFloat = 800
+    /// Extra horizontal room for expanded panel's top flare corners.
+    private static let topCornerOverhang: CGFloat = 16
 
     private func updatePanelFrame(notch: NotchInfo) {
         guard let panel else { return }
-        let panelWidth = max(notch.notchWidth + Self.panelExtraWidth, Self.panelMinWidth)
+        let panelWidth = max(notch.notchWidth + Self.panelExtraWidth, Self.panelMinWidth) + 2 * Self.topCornerOverhang
         let x = notch.rect.midX - panelWidth / 2
         let y = notch.screenFrame.maxY - Self.panelHeight
         let newFrame = NSRect(x: x, y: y, width: panelWidth, height: Self.panelHeight)
@@ -233,12 +253,20 @@ final class PanelManager {
         panel?.makeKeyAndOrderFront(nil)
         stopPillClickMonitor()
 
-        startClickOutsideMonitor { [weak self] in
-            self?.onPillClick?()
+        clickOutsideMonitorGeneration &+= 1
+        let generation = clickOutsideMonitorGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.clickOutsideMonitorGeneration == generation else { return }
+            guard let panel = self.panel, panel.isVisible, !panel.ignoresMouseEvents else { return }
+            self.startClickOutsideMonitor { [weak self] in
+                self?.onPillClick?()
+            }
         }
     }
 
     func setCollapsed() {
+        clickOutsideMonitorGeneration &+= 1
         stopClickOutsideMonitor()
         panel?.resignKey()
         panel?.ignoresMouseEvents = true
@@ -281,9 +309,9 @@ final class PanelManager {
     /// 收缩态热区宽度随左右信息槽变化时更新。
     @MainActor
     func setCollapsedPillRect(notch: NotchInfo, width: CGFloat) {
-        let pillH = notch.notchHeight
+        let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
         let pillX = notch.rect.midX - width / 2
-        let pillY = notch.screenFrame.maxY - pillH
+        let pillY = notch.screenFrame.maxY - pillH + PillLayout.visualHeightOverhang / 2
         pillRect = NSRect(x: pillX, y: pillY, width: width, height: pillH)
     }
 

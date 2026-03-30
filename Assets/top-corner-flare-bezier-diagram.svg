@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="600" viewBox="0 0 1600 600">
+  <defs>
+    <style>
+      .bg { fill: #f3f4f6; }
+      .panel { fill: #000; stroke: rgba(255,255,255,0.18); stroke-width: 2; }
+      .edge  { fill: none; stroke: rgba(255,255,255,0.35); stroke-width: 2; }
+      .curve { fill: none; stroke: rgba(255,255,255,0.85); stroke-width: 4; }
+      .guide { fill: none; stroke: rgba(255,255,255,0.35); stroke-width: 2; stroke-dasharray: 7 7; }
+      .pt { fill: #000; stroke: #fff; stroke-width: 3; }
+      .pt-label { font: 20px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; fill: #fff; }
+      .note { font: 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #111; }
+      .blue { stroke: #60a5fa; fill: none; }
+      .blue-text { fill: #60a5fa; font: 20px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .caption { font: 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: rgba(255,255,255,0.9); }
+    </style>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" x="0" y="0" width="1600" height="600"/>
+
+  <!-- Parameters (example values for illustration; geometry matches code relationships) -->
+  <!-- insetRect: x0=200, y0=110, w=1200, h=380 -->
+  <!-- rTop=120, tf=0.64 => arm = rTop*(1-tf)=43.2 -->
+
+  <!-- Panel body (THIS is the app panel) -->
+  <!-- Build a closed path matching the code's topology:
+       top edge: (x0+rTop,y0) -> (x0+w-rTop,y0)
+       top-right cubic: -> (x0+w,y0+rTop)
+       right edge: -> (x0+w,y0+h-bf)
+       bottom-right fillet: tangent arc
+       bottom edge: -> (x0+bf,y0+h)
+       bottom-left fillet: tangent arc
+       left edge: -> (x0,y0+rTop)
+       top-left cubic: -> back to (x0+rTop,y0)
+  -->
+  <path class="panel" d="
+    M 80 110
+    L 1520 110
+    C 1476.8 110 1400 153.2 1400 230
+    L 1400 462
+    Q 1400 490 1372 490
+    L 228 490
+    Q 200 490 200 462
+    L 200 230
+    C 200 153.2 123.2 110 80 110
+    Z"/>
+
+  <!-- Caption inside the panel -->
+  <text class="caption" x="240" y="165">Black filled shape = panel body (expandedShape.fill(Color.black) + clipShape)</text>
+
+  <!-- Right-top corner construction (overlay) -->
+  <!-- Mirror of the left-top corner (x -> 1600 - x) -->
+  <!-- Left:  P0L=(80,110)  P1L=(123.2,110) P2L=(200,153.2) P3L=(200,230) -->
+  <!-- Right: P0R=(1520,110) P1R=(1476.8,110) P2R=(1400,153.2) P3R=(1400,230) -->
+
+  <!-- Corner point (not on path) -->
+  <circle cx="1400" cy="110" r="4" fill="#fff" opacity="0.9"/>
+
+  <!-- Top edge (straight) ends at P0 -->
+  <path class="edge" d="M 80 110 L 1520 110"/>
+
+  <!-- Right edge (straight) starts at P3 -->
+  <path class="edge" d="M 1400 230 L 1400 462"/>
+
+  <!-- Cubic Bezier from P0 -> P3 with control points P1, P2 -->
+  <path class="curve" d="M 1520 110 C 1476.8 110 1400 153.2 1400 230"/>
+
+  <!-- Guides from control points to curve endpoints -->
+  <path class="guide" d="M 1520 110 L 1476.8 110"/>
+  <path class="guide" d="M 1400 230 L 1400 153.2"/>
+
+  <!-- Points -->
+  <circle class="pt" cx="1520" cy="110" r="8"/>
+  <text class="pt-label" x="1532" y="104">P0</text>
+
+  <circle class="pt" cx="1476.8" cy="110" r="8"/>
+  <text class="pt-label" x="1488.8" y="104">P1</text>
+
+  <circle class="pt" cx="1400" cy="153.2" r="8"/>
+  <text class="pt-label" x="1412" y="160">P2</text>
+
+  <circle class="pt" cx="1400" cy="230" r="8"/>
+  <text class="pt-label" x="1412" y="236">P3</text>
+
+  <!-- rTop measurement (horizontal on top edge) -->
+  <line class="blue" x1="1400" y1="76" x2="1520" y2="76" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text class="blue-text" x="1430" y="62">rTop</text>
+
+  <!-- rTop measurement (vertical on right edge) -->
+  <line class="blue" x1="1442" y1="110" x2="1442" y2="230" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text class="blue-text" x="1454" y="176">rTop</text>
+
+  <!-- arm measurement (horizontal to P1) -->
+  <line class="blue" x1="1400" y1="140" x2="1476.8" y2="140" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text class="blue-text" x="1422" y="132">arm</text>
+
+  <!-- arm measurement (vertical to P2) -->
+  <line class="blue" x1="1478" y1="110" x2="1478" y2="153.2" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text class="blue-text" x="1490" y="138">arm</text>
+
+  <!-- Left-top corner (adjusted per request) -->
+  <!-- dis = |P0.x - P3.x| = |320 - 200| = 120; move P0 by -2*dis => P0.x = 80 -->
+  <!-- P0L=(80,110); P3L=(200,230) -->
+  <!-- Keep P2L on left edge; set P1L on top edge at (P0.x + arm, y0) = (123.2,110) -->
+  <path class="edge" d="M 80 110 L 1280 110"/>
+  <path class="edge" d="M 200 230 L 200 462"/>
+  <path class="curve" d="M 80 110 C 123.2 110 200 153.2 200 230"/>
+  <path class="guide" d="M 80 110 L 123.2 110"/>
+  <path class="guide" d="M 200 230 L 200 153.2"/>
+  <circle class="pt" cx="80" cy="110" r="8"/>
+  <text class="pt-label" x="92" y="104">P0</text>
+  <circle class="pt" cx="123.2" cy="110" r="8"/>
+  <text class="pt-label" x="135.2" y="104">P1</text>
+  <circle class="pt" cx="200" cy="153.2" r="8"/>
+  <text class="pt-label" x="212" y="160">P2</text>
+  <circle class="pt" cx="200" cy="230" r="8"/>
+  <text class="pt-label" x="212" y="236">P3</text>
+
+  <!-- Explanatory note (outside panel) -->
+  <rect x="980" y="430" width="560" height="130" fill="#fff" stroke="#d1d5db" stroke-width="2"/>
+  <text class="note" x="1004" y="462">Code mapping:</text>
+  <text class="note" x="1004" y="490">P0 = (x0+w-rTop, y0), P3 = (x0+w, y0+rTop)</text>
+  <text class="note" x="1004" y="518">P1 = (x0+w-arm, y0),  P2 = (x0+w, y0+arm)</text>
+  <text class="note" x="1004" y="546">arm = rTop * (1 - tf); larger tf -&gt; smaller arm -&gt; turn closer to the corner</text>
+</svg>

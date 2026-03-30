@@ -17,7 +17,7 @@ struct AlphabetGridView: View {
     @State private var indexPointerLocation: CGPoint?
     @State private var letterCenterY: [String: CGFloat] = [:]
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+    private let columnCount = 4
     private let indexColumnWidth: CGFloat = 36
     /// 固定行高，避免缩放时 GeometryReader / Preference 抖动导致卡顿。
     private let indexRowHeight: CGFloat = 20
@@ -57,12 +57,7 @@ struct AlphabetGridView: View {
                         LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
                             ForEach(groupedApps, id: \.0) { letter, sectionApps in
                                 Section {
-                                    LazyVGrid(columns: columns, spacing: 16) {
-                                        ForEach(sectionApps) { app in
-                                            AppItemView(app: app)
-                                                .onTapGesture { onAppTap(app) }
-                                        }
-                                    }
+                                    sectionAppGrid(sectionApps: sectionApps)
                                     .padding(.horizontal, 16)
                                 } header: {
                                     Text(letter)
@@ -92,6 +87,37 @@ struct AlphabetGridView: View {
                 }
                 .onPreferenceChange(AlphabetIndexLetterYPreference.self) { letterCenterY = $0 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func sectionAppGrid(sectionApps: [AppInfo]) -> some View {
+        if sectionApps.isEmpty {
+            Color.clear.frame(height: 0)
+        } else {
+            let rowCount = (sectionApps.count + columnCount - 1) / columnCount
+            let apps = sectionApps
+            VStack(alignment: .center, spacing: 16) {
+                ForEach(0..<rowCount, id: \.self) { row in
+                    HStack(spacing: 12) {
+                        ForEach(0..<columnCount, id: \.self) { col in
+                            let idx = row * columnCount + col
+                            Group {
+                                if idx < apps.count {
+                                    AppItemView(app: apps[idx])
+                                        .onTapGesture { onAppTap(apps[idx]) }
+                                } else {
+                                    Color.clear
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 16)
         }
     }
 

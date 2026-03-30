@@ -13,6 +13,8 @@ final class PillHudViewModel: ObservableObject {
     private var lastBytesOut: UInt64 = 0
     private var lastSampleTime: Date?
     private var didPrimeNetSample = false
+    /// `netstat` 在后台跑完后顺序可能与下一 tick 交错，用序号丢弃过期的结果。
+    private var networkFetchGeneration: UInt64 = 0
 
     func start() {
         stop()
@@ -33,11 +35,21 @@ final class PillHudViewModel: ObservableObject {
 
     private func tick() {
         batteryState = BatteryPowerReader.readState()
-        refreshNetwork()
+        // `netstat` 使用 `Process.waitUntilExit()`，**禁止**在主线程调用：从设置切回本应用时会叠在激活/layout 周期上，
+        // 触发 `NSHostingView` 约束更新递归直至崩溃（见 DiagnosticReports 栈）。
+        networkFetchGeneration &+= 1
+        let gen = networkFetchGeneration
+        DispatchQueue.global(qos: .utility).async {
+            let pair = NetworkThroughputReader.cumulativeBytes()
+            Task { @MainActor [weak self] in
+                guard let self, self.networkFetchGeneration == gen else { return }
+                self.applyNetworkSample(pair)
+            }
+        }
     }
 
-    private func refreshNetwork() {
-        guard let pair = NetworkThroughputReader.cumulativeBytes() else {
+    private func applyNetworkSample(_ pair: (UInt64, UInt64)?) {
+        guard let pair else {
             downloadText = "↓ —"
             uploadText = "↑ —"
             return

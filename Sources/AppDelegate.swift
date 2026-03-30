@@ -59,6 +59,7 @@ final class IslandViewModel: ObservableObject {
     func toggle() {
         if state == .collapsed {
             PanelManager.shared.setExpanded()
+            // 展开/收起曲线由设置项决定；窗口与 Grid 布局已由 `IslandPanelHostingView` + 非 Lazy 网格稳住，避免再走 `updateAnimatedWindowSize` 死循环。
             withAnimation(settings.expandAnimation.animation) {
                 state = .expanded
                 searchText = ""

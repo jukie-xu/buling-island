@@ -10,15 +10,16 @@ struct LaunchpadGridView: View {
 
     @State private var openFolderID: UUID? = nil
 
-    // Drag state
+    // Drag state（必须用布局下标区分格子：同一 `.app(bundleID)` 在数组中出现多次时 `LaunchpadItem` 完全相等，用旧逻辑会串帧、串位甚至合并成重复文件夹）
     @State private var draggedItem: LaunchpadItem? = nil
+    @State private var draggedSourceIndex: Int? = nil
     @State private var dragOffset: CGSize = .zero
     @State private var dragStartLocation: CGPoint = .zero
-    @State private var dropTargetItem: LaunchpadItem? = nil
-    @State private var itemFrames: [LaunchpadItem: CGRect] = [:]
+    @State private var dropTargetIndex: Int? = nil
+    @State private var itemFrames: [Int: CGRect] = [:]
 
     // Hover-to-merge state
-    @State private var hoverItem: LaunchpadItem? = nil
+    @State private var hoverTargetIndex: Int? = nil
     @State private var hoverStartTime: Date? = nil
     @State private var mergeTimerTask: DispatchWorkItem? = nil
     private let mergeHoverDuration: TimeInterval = 0.3
@@ -27,16 +28,31 @@ struct LaunchpadGridView: View {
     @State private var lastReorderTime: Date = .distantPast
     private let reorderCooldown: TimeInterval = 0.15
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
-
     var body: some View {
         ZStack {
             ScrollView(.vertical, showsIndicators: true) {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(folderManager.layout) { item in
-                        itemCell(item)
+                let layout = folderManager.layout
+                let colCount = 4
+                let rowCount = layout.isEmpty ? 0 : (layout.count + colCount - 1) / colCount
+                VStack(alignment: .center, spacing: 16) {
+                    ForEach(0..<rowCount, id: \.self) { row in
+                        HStack(spacing: 12) {
+                            ForEach(0..<colCount, id: \.self) { col in
+                                let i = row * colCount + col
+                                Group {
+                                    if i < layout.count {
+                                        itemCell(layout[i], layoutIndex: i)
+                                    } else {
+                                        Color.clear
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .animation(.easeInOut(duration: 0.2), value: folderManager.layout)
@@ -136,42 +152,42 @@ struct LaunchpadGridView: View {
     // MARK: - Item Cell
 
     @ViewBuilder
-    private func itemCell(_ item: LaunchpadItem) -> some View {
+    private func itemCell(_ item: LaunchpadItem, layoutIndex: Int) -> some View {
         switch item {
         case .app(let bundleID):
             if let app = allApps.first(where: { $0.id == bundleID }) {
-                appCell(app: app, item: item)
+                appCell(app: app, item: item, layoutIndex: layoutIndex)
             }
         case .folder(let folderID):
             if let folder = folderManager.folder(for: folderID) {
-                folderCell(folder: folder, item: item)
+                folderCell(folder: folder, item: item, layoutIndex: layoutIndex)
             }
         }
     }
 
     // MARK: - App Cell
 
-    private func appCell(app: AppInfo, item: LaunchpadItem) -> some View {
+    private func appCell(app: AppInfo, item: LaunchpadItem, layoutIndex: Int) -> some View {
         AppItemView(app: app)
             .wiggle(isEditing)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
-                    .opacity(dropTargetItem == item ? 1 : 0)
+                    .opacity(dropTargetIndex == layoutIndex ? 1 : 0)
             )
-            .opacity(draggedItem == item ? 0.01 : 1)
-            .scaleEffect(dropTargetItem == item ? 1.1 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: dropTargetItem)
+            .opacity(draggedSourceIndex == layoutIndex ? 0.01 : 1)
+            .scaleEffect(dropTargetIndex == layoutIndex ? 1.1 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: dropTargetIndex)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
-                        key: ItemFramePreference.self,
-                        value: [item: geo.frame(in: .named("grid"))]
+                        key: GridCellFramePreference.self,
+                        value: [layoutIndex: geo.frame(in: .named("grid"))]
                     )
                 }
             )
             .gesture(isEditing ? nil : enterEditGesture())
-            .gesture(isEditing ? directDragGesture(for: item) : nil)
+            .gesture(isEditing ? directDragGesture(for: item, sourceIndex: layoutIndex) : nil)
             .simultaneousGesture(
                 TapGesture().onEnded {
                     if !isEditing {
@@ -179,14 +195,14 @@ struct LaunchpadGridView: View {
                     }
                 }
             )
-            .onPreferenceChange(ItemFramePreference.self) { frames in
+            .onPreferenceChange(GridCellFramePreference.self) { frames in
                 itemFrames.merge(frames) { _, new in new }
             }
     }
 
     // MARK: - Folder Cell
 
-    private func folderCell(folder: AppFolder, item: LaunchpadItem) -> some View {
+    private func folderCell(folder: AppFolder, item: LaunchpadItem, layoutIndex: Int) -> some View {
         ZStack(alignment: .topLeading) {
             FolderItemView(folder: folder, allApps: allApps)
 
@@ -207,27 +223,27 @@ struct LaunchpadGridView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
-                    .opacity(dropTargetItem == item ? 1 : 0)
+                    .opacity(dropTargetIndex == layoutIndex ? 1 : 0)
             )
-            .opacity(draggedItem == item ? 0.01 : 1)
-            .scaleEffect(dropTargetItem == item ? 1.1 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: dropTargetItem)
+            .opacity(draggedSourceIndex == layoutIndex ? 0.01 : 1)
+            .scaleEffect(dropTargetIndex == layoutIndex ? 1.1 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: dropTargetIndex)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
-                        key: ItemFramePreference.self,
-                        value: [item: geo.frame(in: .named("grid"))]
+                        key: GridCellFramePreference.self,
+                        value: [layoutIndex: geo.frame(in: .named("grid"))]
                     )
                 }
             )
             .gesture(isEditing ? nil : enterEditGesture())
-            .gesture(isEditing ? directDragGesture(for: item) : nil)
+            .gesture(isEditing ? directDragGesture(for: item, sourceIndex: layoutIndex) : nil)
             .simultaneousGesture(
                 TapGesture().onEnded {
                     openFolderID = folder.id
                 }
             )
-            .onPreferenceChange(ItemFramePreference.self) { frames in
+            .onPreferenceChange(GridCellFramePreference.self) { frames in
                 itemFrames.merge(frames) { _, new in new }
             }
     }
@@ -243,11 +259,12 @@ struct LaunchpadGridView: View {
             }
     }
 
-    private func directDragGesture(for item: LaunchpadItem) -> some Gesture {
+    private func directDragGesture(for item: LaunchpadItem, sourceIndex: Int) -> some Gesture {
         DragGesture(minimumDistance: 5, coordinateSpace: .named("grid"))
             .onChanged { drag in
-                if draggedItem == nil {
-                    draggedItem = item
+                if draggedSourceIndex == nil {
+                    draggedSourceIndex = sourceIndex
+                    draggedItem = folderManager.layout.indices.contains(sourceIndex) ? folderManager.layout[sourceIndex] : item
                     dragStartLocation = drag.startLocation
                 }
                 dragOffset = drag.translation
@@ -258,56 +275,55 @@ struct LaunchpadGridView: View {
                 )
 
                 let canMerge = item.isApp
+                let sourceIdx = draggedSourceIndex ?? sourceIndex
                 // Use FULL frame for merge detection — dwell time differentiates merge from reorder
-                let candidateMerge = canMerge ? findMergeCandidate(at: currentPos, excluding: item) : nil
+                let candidateMerge = canMerge ? findMergeCandidate(at: currentPos, excludingSourceIndex: sourceIdx) : nil
 
-                // ── Merge already confirmed (dropTargetItem set) ──
-                if dropTargetItem != nil {
-                    if let candidate = candidateMerge, candidate != dropTargetItem {
+                // ── Merge already confirmed (dropTargetIndex set) ──
+                if let lockedTarget = dropTargetIndex {
+                    if let candidate = candidateMerge, candidate != lockedTarget {
                         // Moved to a DIFFERENT item → switch merge target
                         cancelMergeTimer()
-                        withAnimation(.easeInOut(duration: 0.1)) { dropTargetItem = nil }
-                        hoverItem = candidate
+                        withAnimation(.easeInOut(duration: 0.1)) { dropTargetIndex = nil }
+                        hoverTargetIndex = candidate
                         startMergeTimer(for: candidate)
                     } else if candidateMerge == nil,
-                              let targetFrame = itemFrames[dropTargetItem!] {
+                              let targetFrame = itemFrames[lockedTarget] {
                         let expanded = targetFrame.insetBy(dx: -20, dy: -20)
                         if !expanded.contains(currentPos) {
                             cancelMergeTimer()
-                            withAnimation(.easeInOut(duration: 0.1)) { dropTargetItem = nil }
-                            hoverItem = nil
+                            withAnimation(.easeInOut(duration: 0.1)) { dropTargetIndex = nil }
+                            hoverTargetIndex = nil
                         }
                     }
                     return
                 }
 
                 // ── Track merge candidate ──
-                if candidateMerge != hoverItem {
-                    let previousHover = hoverItem
+                if candidateMerge != hoverTargetIndex {
+                    let previousHover = hoverTargetIndex
                     cancelMergeTimer()
-                    hoverItem = candidateMerge
+                    hoverTargetIndex = candidateMerge
 
                     if let candidate = candidateMerge {
                         // Entered a new item → start merge timer
                         startMergeTimer(for: candidate)
-                    } else if let prev = previousHover {
+                    } else if let prev = previousHover, let fromIdx = draggedSourceIndex {
                         // Left an item without merging (< 0.3s) → reorder to that item's position
-                        reorderToTarget(item: item, target: prev)
+                        reorderToTarget(sourceIndex: fromIdx, targetIndex: prev)
                     }
                 }
-                // While hovering over an item (merge timer running), no reorder
-                // Reorder only happens above when leaving a hover target
             }
-            .onEnded { drag in
+            .onEnded { _ in
                 cancelMergeTimer()
 
-                guard let dragged = draggedItem else {
+                guard draggedSourceIndex != nil else {
                     resetDragState()
                     return
                 }
 
-                if let target = dropTargetItem {
-                    performMerge(dragged: dragged, target: target)
+                if let targetIdx = dropTargetIndex, let sourceIdx = draggedSourceIndex {
+                    performMerge(sourceIndex: sourceIdx, targetIndex: targetIdx)
                 } else {
                     folderManager.commitLayout()
                 }
@@ -321,48 +337,53 @@ struct LaunchpadGridView: View {
         mergeTimerTask = nil
     }
 
-    private func startMergeTimer(for candidate: LaunchpadItem) {
-        let work = DispatchWorkItem { [candidate] in
+    private func startMergeTimer(for candidateIndex: Int) {
+        let work = DispatchWorkItem { [candidateIndex] in
             withAnimation(.easeInOut(duration: 0.15)) {
-                dropTargetItem = candidate
+                dropTargetIndex = candidateIndex
             }
         }
         mergeTimerTask = work
         DispatchQueue.main.asyncAfter(deadline: .now() + mergeHoverDuration, execute: work)
     }
 
-    // MARK: - Live Reorder (by target item, not cursor position)
+    // MARK: - Live Reorder (by layout index)
 
-    private func reorderToTarget(item: LaunchpadItem, target: LaunchpadItem) {
+    private func reorderToTarget(sourceIndex: Int, targetIndex: Int) {
         guard Date().timeIntervalSince(lastReorderTime) >= reorderCooldown else { return }
-        guard let fromIndex = folderManager.layout.firstIndex(of: item) else { return }
-        guard let toIndex = folderManager.layout.firstIndex(of: target) else { return }
-        guard fromIndex != toIndex else { return }
+        guard sourceIndex != targetIndex else { return }
+        let layout = folderManager.layout
+        guard sourceIndex < layout.count, targetIndex < layout.count else { return }
+        var newIdx = sourceIndex
         withAnimation(.easeInOut(duration: 0.15)) {
-            folderManager.moveItemLive(from: fromIndex, to: toIndex > fromIndex ? toIndex + 1 : toIndex)
+            newIdx = folderManager.moveItemLive(from: sourceIndex, to: targetIndex > sourceIndex ? targetIndex + 1 : targetIndex)
         }
+        draggedSourceIndex = newIdx
         lastReorderTime = Date()
     }
 
     private func resetDragState() {
         cancelMergeTimer()
-        hoverItem = nil
+        hoverTargetIndex = nil
         withAnimation(.easeInOut(duration: 0.15)) {
             draggedItem = nil
+            draggedSourceIndex = nil
             dragOffset = .zero
-            dropTargetItem = nil
+            dropTargetIndex = nil
         }
     }
 
     // MARK: - Merge candidate detection (full frame — dwell time differentiates)
 
-    private func findMergeCandidate(at point: CGPoint, excluding: LaunchpadItem) -> LaunchpadItem? {
-        guard case .app = excluding else { return nil }
+    private func findMergeCandidate(at point: CGPoint, excludingSourceIndex: Int) -> Int? {
+        guard folderManager.layout.indices.contains(excludingSourceIndex),
+              case .app = folderManager.layout[excludingSourceIndex] else { return nil }
 
-        for (item, frame) in itemFrames {
-            guard item != excluding, folderManager.layout.contains(item) else { continue }
+        for (index, frame) in itemFrames {
+            guard index != excludingSourceIndex,
+                  folderManager.layout.indices.contains(index) else { continue }
             if frame.contains(point) {
-                return item
+                return index
             }
         }
         return nil
@@ -370,10 +391,23 @@ struct LaunchpadGridView: View {
 
     // MARK: - Merge actions
 
-    private func performMerge(dragged: LaunchpadItem, target: LaunchpadItem) {
+    private func performMerge(sourceIndex: Int, targetIndex: Int) {
+        let layout = folderManager.layout
+        guard layout.indices.contains(sourceIndex), layout.indices.contains(targetIndex),
+              sourceIndex != targetIndex else {
+            folderManager.commitLayout()
+            return
+        }
+        let dragged = layout[sourceIndex]
+        let target = layout[targetIndex]
         switch (dragged, target) {
         case (.app(let draggedID), .app(let targetID)):
-            folderManager.mergeApps(targetID, draggedID)
+            if draggedID == targetID {
+                // 两个格子是同一应用：删掉正在拖起的那一格，避免无意义的「假合并」
+                folderManager.removeLayoutSlot(at: sourceIndex)
+            } else {
+                folderManager.mergeApps(targetID, draggedID)
+            }
         case (.app(let draggedID), .folder(let folderID)):
             folderManager.addAppToFolder(draggedID, folderID: folderID)
         default:
@@ -382,11 +416,11 @@ struct LaunchpadGridView: View {
     }
 }
 
-// MARK: - Preference Key for tracking item frames
+// MARK: - Preference Key for tracking cell frames by layout index
 
-struct ItemFramePreference: PreferenceKey {
-    static var defaultValue: [LaunchpadItem: CGRect] = [:]
-    static func reduce(value: inout [LaunchpadItem: CGRect], nextValue: () -> [LaunchpadItem: CGRect]) {
+struct GridCellFramePreference: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
         value.merge(nextValue()) { _, new in new }
     }
 }

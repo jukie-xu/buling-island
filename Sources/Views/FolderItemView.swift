@@ -21,12 +21,21 @@ struct FolderItemView: View {
                     .fill(lightOnDarkIsland ? Color.white.opacity(0.1) : Color.primary.opacity(0.06))
                     .frame(width: 64, height: 64)
 
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(16), spacing: 2), count: 3), spacing: 2) {
-                    ForEach(previewApps) { app in
-                        Image(nsImage: app.icon)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 16, height: 16)
+                Grid(horizontalSpacing: 2, verticalSpacing: 2) {
+                    ForEach(0..<3, id: \.self) { row in
+                        GridRow {
+                            ForEach(0..<3, id: \.self) { col in
+                                let idx = row * 3 + col
+                                if idx < previewApps.count {
+                                    Image(nsImage: previewApps[idx].icon)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 16, height: 16)
+                                } else {
+                                    Color.clear.frame(width: 16, height: 16)
+                                }
+                            }
+                        }
                     }
                 }
             }

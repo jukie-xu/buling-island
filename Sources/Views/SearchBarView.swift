@@ -35,7 +35,10 @@ struct SearchBarView: View {
                 .fill(Color.white.opacity(0.12))
         )
         .onAppear {
-            isFocused = true
+            // 避免与 `makeKeyAndOrderFront`、过渡首帧抢第一响应者在同一会话栈里叠在一起导致 AppKit 异常退出。
+            DispatchQueue.main.async {
+                isFocused = true
+            }
         }
     }
 }

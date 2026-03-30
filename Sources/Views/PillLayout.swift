@@ -6,10 +6,19 @@ enum PillLayout {
     /// 两翼与刘海留缝（避免贴死硬件裁切感）。
     static let notchAdjacentGap: CGFloat = 2
     /// 与 pill 左右圆角内侧的留白（内容靠最外沿对齐）。
-    static let pillEndInset: CGFloat = 4
+    static let pillEndInset: CGFloat = 6
+
+    /// Without an outer stroke, the pill can look visually shorter than the notch.
+    /// We slightly overhang the pill height and shift it upward in `IslandView`,
+    /// and keep hit-testing in sync via `PanelManager`.
+    static let visualHeightOverhang: CGFloat = 2
+
+    /// Content inset measured from the notch vertical edge (inner edge between wing and core).
+    /// This keeps battery/network text stable even if wing widths change.
+    static let contentInsetFromNotchEdge: CGFloat = 0
 
     /// 左侧或右侧只要挂了电量/网速任一模块，两翼占位宽度**相同且固定**，避免左右不对称、随类型浮动。
-    static let sideSlotFixedWidth: CGFloat = 52
+    static let sideSlotFixedWidth: CGFloat = 56
 
     static func slotWidth(_ widget: PillSideWidget) -> CGFloat {
         switch widget {

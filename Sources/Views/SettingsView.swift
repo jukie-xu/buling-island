@@ -7,7 +7,6 @@ import ServiceManagement
 private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
     case dashboard = "控制台"
     case layout = "布局"
-    case appearance = "外观"
     case animation = "动画"
     case general = "通用"
 
@@ -17,7 +16,6 @@ private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "rectangle.inset.filled.and.person.filled"
         case .layout: return "square.grid.2x2"
-        case .appearance: return "paintbrush"
         case .animation: return "sparkles.rectangle.stack"
         case .general: return "gearshape"
         }
@@ -48,8 +46,6 @@ struct SettingsView: View {
                     AnimationSettingsTab(settings: settings, colorScheme: colorScheme)
                 case .layout:
                     LayoutSettingsTab(settings: settings)
-                case .appearance:
-                    AppearanceSettingsTab(settings: settings, colorScheme: colorScheme)
                 case .general:
                     GeneralSettingsTab()
                 }
@@ -168,7 +164,6 @@ private struct SettingsDashboardTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                islandPreviewCard
                 globalTogglesCard
                 widgetModulesCard
                 roadmapCard
@@ -214,11 +209,11 @@ private struct SettingsDashboardTab: View {
                     if previewExpanded {
                         previewExpandedMock
                             .offset(x: expandedCX - Self.previewExpandedMockWidth / 2, y: 0)
-                            .transition(settings.expandAnimation.transition)
+                            .transition(IslandPanelViewTransition.settingsPreviewExpanded)
                     } else {
                         previewCollapsedPill
                             .offset(x: pillCX - Self.previewCollapsedPillWidth / 2, y: 0)
-                            .transition(settings.collapseAnimation.transition)
+                            .transition(IslandPanelViewTransition.settingsPreviewCollapsed)
                     }
                 }
                 .frame(width: w, height: 200)
@@ -317,24 +312,9 @@ private struct SettingsDashboardTab: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 nookToggle(
-                    title: "刘海信息扩展",
-                    caption: "电量与实时网速：请在「布局」中配置左侧 / 右侧槽位；网速依赖系统 netstat。",
-                    planned: true
-                )
-                nookToggle(
-                    title: "多屏显示",
-                    caption: "外接显示器同步显示（规划中）",
-                    planned: true
-                )
-                nookToggle(
                     title: "点击展开",
                     caption: "点击刘海区域展开面板",
                     isOn: $settings.clickToExpand
-                )
-                nookToggle(
-                    title: "试验通知",
-                    caption: "在刘海区域显示通知（规划中）",
-                    planned: true
                 )
                 nookToggle(
                     title: "开启灵动岛",
@@ -675,7 +655,7 @@ struct AnimationSettingsTab: View {
                             )
                     )
                     .clipShape(TangentFilletBottomRectangle(bottomFilletRadius: 10))
-                    .transition(settings.expandAnimation.transition)
+                    .transition(IslandPanelViewTransition.settingsPreviewExpanded)
                 } else {
                     TangentFilletBottomRectangle(bottomFilletRadius: 6)
                         .fill(pillColor.opacity(0.05))
@@ -684,7 +664,7 @@ struct AnimationSettingsTab: View {
                                 .strokeBorder(pillColor.opacity(0.15), lineWidth: 1)
                         )
                         .frame(width: 76, height: 14)
-                        .transition(settings.collapseAnimation.transition)
+                        .transition(IslandPanelViewTransition.settingsPreviewCollapsed)
                 }
             }
             .frame(height: 140)

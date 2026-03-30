@@ -1,6 +1,7 @@
 import Foundation
 
 /// 通过 `netstat -ibn` 解析各 `en*` 接口的累计收发字节并求和。
+/// 实现内会 `waitUntilExit()`：**勿在主线程调用**（由 `PillHudViewModel` 在后台队列调用）。
 enum NetworkThroughputReader {
 
     static func cumulativeBytes() -> (UInt64, UInt64)? {

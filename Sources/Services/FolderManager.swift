@@ -34,6 +34,12 @@ final class FolderManager: ObservableObject {
            let decoded = try? JSONDecoder().decode([LaunchpadItem].self, from: data) {
             layout = decoded
         }
+        if normalizeFolderAppLists() {
+            saveFolders()
+        }
+        if dedupeTopLevelAppEntries() {
+            saveLayout()
+        }
     }
 
     private func saveFolders() {
@@ -111,6 +117,37 @@ final class FolderManager: ObservableObject {
             saveFolders()
             saveLayout()
         }
+
+        if dedupeTopLevelAppEntries() {
+            saveLayout()
+        }
+    }
+
+    /// 同一 bundle 在顶层只能占一格；历史数据或旧版拖拽 bug 可能产生重复 `.app(id)`。
+    @discardableResult
+    private func dedupeTopLevelAppEntries() -> Bool {
+        var seen = Set<String>()
+        let before = layout.count
+        layout.removeAll { item in
+            if case .app(let id) = item {
+                if seen.contains(id) { return true }
+                seen.insert(id)
+            }
+            return false
+        }
+        return layout.count != before
+    }
+
+    @discardableResult
+    private func normalizeFolderAppLists() -> Bool {
+        var changed = false
+        for i in folders.indices {
+            var seen = Set<String>()
+            let before = folders[i].appIDs.count
+            folders[i].appIDs = folders[i].appIDs.filter { seen.insert($0).inserted }
+            if folders[i].appIDs.count != before { changed = true }
+        }
+        return changed
     }
 
     // MARK: - Folder CRUD
@@ -123,6 +160,7 @@ final class FolderManager: ObservableObject {
     }
 
     func mergeApps(_ appID1: String, _ appID2: String) {
+        guard appID1 != appID2 else { return }
         let folder = createFolder(name: "新建文件夹", appIDs: [appID1, appID2])
 
         // Replace both apps in layout with the folder, remove the second
@@ -197,15 +235,26 @@ final class FolderManager: ObservableObject {
         saveLayout()
     }
 
-    /// Move item without persisting — used during live drag reorder
-    func moveItemLive(from source: Int, to destination: Int) {
+    /// Move item without persisting — used during live drag reorder.
+    /// - Returns: The layout index of the moved item after the operation.
+    @discardableResult
+    func moveItemLive(from source: Int, to destination: Int) -> Int {
         let offset = source > destination ? destination : destination - 1
-        guard source != offset else { return }
+        guard source != offset else { return source }
         let item = layout.remove(at: source)
-        layout.insert(item, at: offset > layout.count ? layout.count : offset)
+        let insertAt = min(max(0, offset), layout.count)
+        layout.insert(item, at: insertAt)
+        return insertAt
     }
 
     func commitLayout() {
+        saveLayout()
+    }
+
+    /// 从顶层布局移除指定下标（用于拖放取消重复格等）。
+    func removeLayoutSlot(at index: Int) {
+        guard layout.indices.contains(index) else { return }
+        layout.remove(at: index)
         saveLayout()
     }
 
