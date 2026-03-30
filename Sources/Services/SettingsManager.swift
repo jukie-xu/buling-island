@@ -20,6 +20,10 @@ final class SettingsManager: ObservableObject {
     private let clickToExpandKey = "clickToExpand"
     private let pillLeftSlotKey = "pillLeftSlot"
     private let pillRightSlotKey = "pillRightSlot"
+    private let pillFlareRadiusKey = "pillFlareRadius"
+    private let pillVisualWidthOverhangKey = "pillVisualWidthOverhang"
+    private let pillVisualHeightOverhangKey = "pillVisualHeightOverhang"
+    private let pillSideSlotWidthKey = "pillSideSlotWidth"
 
     @Published var expandAnimation: ExpandAnimation {
         didSet { UserDefaults.standard.set(expandAnimation.rawValue, forKey: expandKey) }
@@ -68,6 +72,28 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(pillRightSlot.rawValue, forKey: pillRightSlotKey) }
     }
 
+    // MARK: - Pill appearance tuning
+
+    /// 收缩态 pill 顶角外撇弯角尺度（越小越“尖/紧”，越大越“圆润”）。
+    @Published var pillFlareRadius: CGFloat {
+        didSet { UserDefaults.standard.set(Double(pillFlareRadius), forKey: pillFlareRadiusKey) }
+    }
+
+    /// 收缩态 pill 两侧额外可视宽度（用于把 P0 推得更外侧，让外撇更圆润），单侧值。
+    @Published var pillVisualWidthOverhang: CGFloat {
+        didSet { UserDefaults.standard.set(Double(pillVisualWidthOverhang), forKey: pillVisualWidthOverhangKey) }
+    }
+
+    /// 收缩态 pill 额外可视高度（用于让 pill 略高于 notch，从而更“饱满”），为额外叠加值。
+    @Published var pillVisualHeightOverhang: CGFloat {
+        didSet { UserDefaults.standard.set(Double(pillVisualHeightOverhang), forKey: pillVisualHeightOverhangKey) }
+    }
+
+    /// 收缩态 pill 左/右信息槽固定宽度（电量/网速）。
+    @Published var pillSideSlotWidth: CGFloat {
+        didSet { UserDefaults.standard.set(Double(pillSideSlotWidth), forKey: pillSideSlotWidthKey) }
+    }
+
     private init() {
         let expandRaw = UserDefaults.standard.string(forKey: expandKey) ?? ""
         self.expandAnimation = ExpandAnimation(rawValue: expandRaw) ?? .spring
@@ -88,6 +114,18 @@ final class SettingsManager: ObservableObject {
         self.pillLeftSlot = PillSideWidget(rawValue: leftRaw) ?? .none
         let rightRaw = UserDefaults.standard.string(forKey: pillRightSlotKey) ?? ""
         self.pillRightSlot = PillSideWidget(rawValue: rightRaw) ?? .none
+
+        let flareRadius = UserDefaults.standard.object(forKey: pillFlareRadiusKey) as? Double
+        self.pillFlareRadius = CGFloat(flareRadius ?? 4)
+
+        let overhang = UserDefaults.standard.object(forKey: pillVisualWidthOverhangKey) as? Double
+        self.pillVisualWidthOverhang = CGFloat(overhang ?? 4)
+
+        let heightOverhang = UserDefaults.standard.object(forKey: pillVisualHeightOverhangKey) as? Double
+        self.pillVisualHeightOverhang = CGFloat(heightOverhang ?? 0)
+
+        let slotW = UserDefaults.standard.object(forKey: pillSideSlotWidthKey) as? Double
+        self.pillSideSlotWidth = CGFloat(slotW ?? 54)
     }
 
     private func savePillColor() {

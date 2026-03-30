@@ -8,6 +8,14 @@ final class PillHudViewModel: ObservableObject {
     @Published private(set) var downloadText = "—"
     @Published private(set) var uploadText = "—"
 
+    var downloadRateText: String {
+        downloadText.replacingOccurrences(of: "↓ ", with: "")
+    }
+
+    var uploadRateText: String {
+        uploadText.replacingOccurrences(of: "↑ ", with: "")
+    }
+
     private var timer: Timer?
     private var lastBytesIn: UInt64 = 0
     private var lastBytesOut: UInt64 = 0

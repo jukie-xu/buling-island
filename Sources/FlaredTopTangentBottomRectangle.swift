@@ -7,6 +7,9 @@ struct FlaredTopTangentBottomRectangle: InsettableShape {
     var topConvexRadius: CGFloat
     var topCornerFlare: CGFloat = 0.58
     var bottomFilletRadius: CGFloat
+    /// Horizontal inset for the "body" rect relative to the outer rect.
+    /// Increasing this (or the outer rect width) pushes P0 outward while keeping P2 (on the body side) fixed.
+    var bodyInsetX: CGFloat? = nil
 
     var insetAmount: CGFloat = 0
 
@@ -28,7 +31,8 @@ struct FlaredTopTangentBottomRectangle: InsettableShape {
         }
 
         // Body uses a narrower base rect; top flare consumes the outer horizontal margins.
-        let baseRect = insetRect.insetBy(dx: rTop, dy: 0)
+        let insetX = max(bodyInsetX ?? rTop, 0)
+        let baseRect = insetRect.insetBy(dx: insetX, dy: 0)
         let x0 = baseRect.minX
         let w = baseRect.width
 

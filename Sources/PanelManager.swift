@@ -155,7 +155,7 @@ final class PanelManager {
             notch: notch,
             left: SettingsManager.shared.pillLeftSlot,
             right: SettingsManager.shared.pillRightSlot
-        )
+        ) + 2 * PillLayout.visualWidthOverhang
         let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
         let pillX = notch.rect.midX - pillW / 2
         let pillY = notch.screenFrame.maxY - pillH + PillLayout.visualHeightOverhang / 2
@@ -310,9 +310,10 @@ final class PanelManager {
     @MainActor
     func setCollapsedPillRect(notch: NotchInfo, width: CGFloat) {
         let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
-        let pillX = notch.rect.midX - width / 2
+        let w = width + 2 * PillLayout.visualWidthOverhang
+        let pillX = notch.rect.midX - w / 2
         let pillY = notch.screenFrame.maxY - pillH + PillLayout.visualHeightOverhang / 2
-        pillRect = NSRect(x: pillX, y: pillY, width: width, height: pillH)
+        pillRect = NSRect(x: pillX, y: pillY, width: w, height: pillH)
     }
 
     // MARK: - Click outside monitoring (expanded state)

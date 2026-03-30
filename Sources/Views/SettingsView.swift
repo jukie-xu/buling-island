@@ -7,8 +7,8 @@ import ServiceManagement
 private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
     case dashboard = "控制台"
     case layout = "布局"
+    case appearance = "外观"
     case animation = "动画"
-    case general = "通用"
 
     var id: String { rawValue }
 
@@ -16,8 +16,8 @@ private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "rectangle.inset.filled.and.person.filled"
         case .layout: return "square.grid.2x2"
+        case .appearance: return "paintbrush"
         case .animation: return "sparkles.rectangle.stack"
-        case .general: return "gearshape"
         }
     }
 }
@@ -29,6 +29,7 @@ struct SettingsView: View {
     @ObservedObject var settings = SettingsManager.shared
     @State private var selectedSection: SettingsSidebarSection = .dashboard
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showQuitConfirm = false
 
     private var chromeBackground: Color {
         colorScheme == .dark ? Color(white: 0.11) : Color(white: 0.94)
@@ -46,8 +47,8 @@ struct SettingsView: View {
                     AnimationSettingsTab(settings: settings, colorScheme: colorScheme)
                 case .layout:
                     LayoutSettingsTab(settings: settings)
-                case .general:
-                    GeneralSettingsTab()
+                case .appearance:
+                    AppearanceSettingsTab(settings: settings, colorScheme: colorScheme)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -92,6 +93,35 @@ struct SettingsView: View {
             .padding(.horizontal, 10)
 
             Spacer()
+
+            Button {
+                showQuitConfirm = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "power")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("退出")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.red.opacity(colorScheme == .dark ? 0.16 : 0.12))
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 14)
+            .alert("确认退出？", isPresented: $showQuitConfirm) {
+                Button("取消", role: .cancel) { }
+                Button("退出", role: .destructive) {
+                    NSApplication.shared.terminate(nil)
+                }
+            } message: {
+                Text("你想好了你就退吧。")
+            }
         }
         .frame(width: 200)
         .background(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.99))
@@ -127,201 +157,59 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Dashboard (参考 Nook X：预览 + 全局开关 + 能力规划 + 模块卡片)
-
 private struct SettingsDashboardTab: View {
-
-    private static let previewCollapsedPillWidth: CGFloat = CGFloat(88 * 3) / 4
-    private static let previewExpandedMockWidth: CGFloat = 196
-
-    /// 预览区外轮廓：平顶 + 底圆角，与笔记本屏幕上沿 + 刘海语义一致。
-    private static var previewScreenChromeShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: 28,
-            bottomTrailingRadius: 28,
-            topTrailingRadius: 0,
-            style: .continuous
-        )
-    }
 
     @ObservedObject var settings: SettingsManager
     let colorScheme: ColorScheme
 
-    @State private var launchAtLogin: Bool = false
-    @State private var previewExpanded = false
+    private static let showRoadmapAndModules: Bool = false
 
-    /// 将主屏刘海中心映射到预览区域宽度内（与硬件刘海水平对齐，而非窗口内随意居中）。
-    private static func notchAlignedCenterX(in contentWidth: CGFloat, elementHalfWidth: CGFloat) -> CGFloat {
-        let n = NotchDetector.layoutNotch()
-        guard n.screenFrame.width > 1 else { return contentWidth / 2 }
-        let fraction = (n.rect.midX - n.screenFrame.minX) / n.screenFrame.width
-        let x = fraction * contentWidth
-        let inset = elementHalfWidth + 2
-        return max(inset, min(contentWidth - inset, x))
-    }
+    @State private var launchAtLogin: Bool = false
+    @State private var accessibilityGranted: Bool = false
+    @State private var showAccessibilityDisableHint = false
+    private let accessibilityPoller = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 globalTogglesCard
-                widgetModulesCard
-                roadmapCard
+                if Self.showRoadmapAndModules {
+                    widgetModulesCard
+                    roadmapCard
+                }
             }
             .padding(24)
         }
         .onAppear {
             launchAtLogin = SMAppService.mainApp.status == .enabled
+            accessibilityGranted = AXIsProcessTrusted()
+        }
+        .onReceive(accessibilityPoller) { _ in
+            let current = AXIsProcessTrusted()
+            if current != accessibilityGranted {
+                accessibilityGranted = current
+            }
         }
     }
 
-    private var islandPreviewCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("刘海预览")
-                .webNookSectionTitle()
-
-            GeometryReader { geo in
-                let w = geo.size.width
-                let pillCX = Self.notchAlignedCenterX(in: w, elementHalfWidth: Self.previewCollapsedPillWidth / 2)
-                let expandedCX = Self.notchAlignedCenterX(in: w, elementHalfWidth: Self.previewExpandedMockWidth / 2)
-
-                ZStack(alignment: .topLeading) {
-                    // 顶边平直 = 显示器上沿；底角圆角仅为装饰。避免四风圆角把内容顶成「离顶一条缝」。
-                    Self.previewScreenChromeShape
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.35, green: 0.55, blue: 0.95),
-                                    Color(red: 0.95, green: 0.78, blue: 0.35),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: w, height: 200)
-                        .overlay(alignment: .topTrailing) {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .padding(12)
-                        }
-
-                    if previewExpanded {
-                        previewExpandedMock
-                            .offset(x: expandedCX - Self.previewExpandedMockWidth / 2, y: 0)
-                            .transition(IslandPanelViewTransition.settingsPreviewExpanded)
-                    } else {
-                        previewCollapsedPill
-                            .offset(x: pillCX - Self.previewCollapsedPillWidth / 2, y: 0)
-                            .transition(IslandPanelViewTransition.settingsPreviewCollapsed)
-                    }
-                }
-                .frame(width: w, height: 200)
-            }
-            .frame(height: 200)
-            .clipShape(Self.previewScreenChromeShape)
-            .overlay(
-                Self.previewScreenChromeShape
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-            )
-
-            Button {
-                if previewExpanded {
-                    withAnimation(settings.collapseAnimation.animation) {
-                        previewExpanded = false
-                    }
-                } else {
-                    withAnimation(settings.expandAnimation.animation) {
-                        previewExpanded = true
-                    }
-                }
-            } label: {
-                Text(previewExpanded ? "收起预览" : "展开预览")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white)
-                    )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(18)
-        .webNookCard(colorScheme: colorScheme)
-    }
-
-    private var previewCorner: CGFloat { 12 }
-
-    private var previewCollapsedPill: some View {
-        TangentFilletBottomRectangle(bottomFilletRadius: 6)
-        .fill(Color.black.opacity(0.88))
-        .frame(width: Self.previewCollapsedPillWidth, height: 15)
-        .overlay {
-            HStack(spacing: 5) {
-                Image(systemName: "sun.max.fill").font(.system(size: 8)).foregroundStyle(.white.opacity(0.85))
-                Text("0%").font(.system(size: 8, weight: .medium)).foregroundStyle(.white.opacity(0.9))
-                Spacer(minLength: 4)
-                Image(systemName: "arrow.up").font(.system(size: 7))
-                Text("1 KB/s").font(.system(size: 7))
-            }
-            .foregroundStyle(.white.opacity(0.75))
-            .padding(.horizontal, 8)
-        }
-    }
-
-    private var previewExpandedMock: some View {
-        VStack(spacing: 8) {
-            HStack {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.white.opacity(0.12))
-                    .frame(width: 56, height: 12)
-                Spacer()
-            }
-
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.white.opacity(0.1))
-                .frame(width: 120, height: 10)
-
-            HStack(spacing: 6) {
-                ForEach(0..<4, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Color.white.opacity(0.2))
-                        .frame(width: 22, height: 22)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
-        .frame(width: 196)
-        .background(
-            TangentFilletBottomRectangle(bottomFilletRadius: previewCorner)
-                .fill(Color.black.opacity(0.88))
-        )
-        .overlay(
-            TangentFilletBottomRectangle(bottomFilletRadius: previewCorner)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-    }
 
     private var globalTogglesCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("全局开关")
-                .webNookSectionTitle()
+                .sectionTitle()
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                nookToggle(
+                toggleCard(
                     title: "点击展开",
                     caption: "点击刘海区域展开面板",
                     isOn: $settings.clickToExpand
                 )
-                nookToggle(
+                toggleCard(
                     title: "开启灵动岛",
                     caption: "显示顶部刘海启动面板",
                     isOn: $settings.islandEnabled
                 )
-                nookToggle(
+                toggleCard(
                     title: "开机启动",
                     caption: "登录 macOS 时自动启动",
                     isOn: Binding(
@@ -332,10 +220,12 @@ private struct SettingsDashboardTab: View {
                         }
                     )
                 )
+                accessibilityPermissionCard
+                    .gridCellColumns(2)
             }
         }
         .padding(18)
-        .webNookCard(colorScheme: colorScheme)
+        .cardStyle(colorScheme: colorScheme)
     }
 
     private func toggleLaunchAtLogin(_ enable: Bool) {
@@ -350,8 +240,8 @@ private struct SettingsDashboardTab: View {
         }
     }
 
-    private func nookToggle(title: String, caption: String, planned: Bool) -> some View {
-        nookToggleShell(title: title, caption: caption) {
+    private func toggleCard(title: String, caption: String, planned: Bool) -> some View {
+        toggleCardShell(title: title, caption: caption) {
             Text("规划中")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.orange)
@@ -361,8 +251,8 @@ private struct SettingsDashboardTab: View {
         }
     }
 
-    private func nookToggle(title: String, caption: String, isOn: Binding<Bool>) -> some View {
-        nookToggleShell(title: title, caption: caption) {
+    private func toggleCard(title: String, caption: String, isOn: Binding<Bool>) -> some View {
+        toggleCardShell(title: title, caption: caption) {
             Toggle("", isOn: isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -370,7 +260,7 @@ private struct SettingsDashboardTab: View {
         }
     }
 
-    private func nookToggleShell<Control: View>(
+    private func toggleCardShell<Control: View>(
         title: String,
         caption: String,
         @ViewBuilder control: () -> Control
@@ -407,11 +297,44 @@ private struct SettingsDashboardTab: View {
         )
     }
 
+    private var accessibilityPermissionCard: some View {
+        toggleCardShell(
+            title: "辅助功能",
+            caption: "用于监听全局鼠标事件（点击刘海、点击外部收起）"
+        ) {
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { accessibilityGranted },
+                    set: { newValue in
+                        if newValue {
+                            if !accessibilityGranted {
+                                requestAccessibility()
+                            }
+                        } else {
+                            if accessibilityGranted {
+                                showAccessibilityDisableHint = true
+                            }
+                        }
+                    }
+                )
+            )
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .controlSize(.small)
+        }
+        .alert("需要在系统设置撤销", isPresented: $showAccessibilityDisableHint) {
+            Button("知道了", role: .cancel) { }
+        } message: {
+            Text("辅助功能权限只能在系统设置中关闭：系统设置 → 隐私与安全性 → 辅助功能。")
+        }
+    }
+
     private var widgetModulesCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("展开态能力模块")
-                .webNookSectionTitle()
-            Text("与 Nook X 类似，将能力拆为可开关模块；以下为当前产品与规划对照。")
+                .sectionTitle()
+            Text("将能力拆为可开关模块；以下为当前产品与规划对照。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -452,7 +375,7 @@ private struct SettingsDashboardTab: View {
             }
         }
         .padding(18)
-        .webNookCard(colorScheme: colorScheme)
+        .cardStyle(colorScheme: colorScheme)
     }
 
     private enum ModuleTier {
@@ -510,7 +433,7 @@ private struct SettingsDashboardTab: View {
     private var roadmapCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("图 2 功能点 — 产品映射")
-                .webNookSectionTitle()
+                .sectionTitle()
 
             VStack(alignment: .leading, spacing: 10) {
                 roadmapRow(
@@ -534,7 +457,7 @@ private struct SettingsDashboardTab: View {
             .foregroundStyle(.secondary)
         }
         .padding(18)
-        .webNookCard(colorScheme: colorScheme)
+        .cardStyle(colorScheme: colorScheme)
     }
 
     private func roadmapRow(_ title: String, _ detail: String) -> some View {
@@ -546,16 +469,24 @@ private struct SettingsDashboardTab: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+
+    private func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 private extension Text {
-    func webNookSectionTitle() -> some View {
+    func sectionTitle() -> some View {
         font(.system(size: 15, weight: .semibold))
     }
 }
 
 private extension View {
-    func webNookCard(colorScheme: ColorScheme) -> some View {
+    func cardStyle(colorScheme: ColorScheme) -> some View {
         background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(colorScheme == .dark ? Color.white.opacity(0.05) : Color.white)
@@ -914,361 +845,97 @@ struct AppearanceSettingsTab: View {
     @ObservedObject var settings: SettingsManager
     let colorScheme: ColorScheme
 
-    private let presetColors: [(String, Color)] = [
-        ("蓝色", Color.blue.opacity(0.4)),
-        ("紫色", Color.purple.opacity(0.4)),
-        ("青色", Color.cyan.opacity(0.4)),
-        ("绿色", Color.green.opacity(0.4)),
-        ("橙色", Color.orange.opacity(0.4)),
-        ("粉色", Color.pink.opacity(0.4)),
-        ("灰色", Color.gray.opacity(0.3)),
-        ("白色", Color.white.opacity(0.3)),
-    ]
-
-    private var previewColor: Color {
-        if settings.useCustomPillColor {
-            return settings.pillBorderColor
-        }
-        return .primary
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                pillPreview
-                modeSection
-                if settings.useCustomPillColor {
-                    presetSection
-                    customColorSection
-                }
+                pillTuningSection
             }
             .padding(20)
         }
     }
 
-    private var pillPreview: some View {
+    private var pillTuningSection: some View {
         VStack(spacing: 12) {
-            Text("预览")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            ZStack(alignment: .top) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.primary.opacity(0.03))
-                    .frame(height: 60)
-
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(width: 70, height: 12)
-
-                TangentFilletBottomRectangle(bottomFilletRadius: 6)
-                    .fill(previewColor.opacity(0.05))
-                    .overlay(
-                        TangentFilletBottomRectangle(bottomFilletRadius: 6)
-                            .strokeBorder(previewColor.opacity(0.15), lineWidth: 1)
-                    )
-                    .frame(width: 76, height: 14)
-            }
-            .frame(height: 60)
-        }
-    }
-
-    private var modeSection: some View {
-        VStack(spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "circle.lefthalf.filled")
+                Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
-                Text("颜色模式")
+                Text("Pill 外观微调")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
                 Spacer()
             }
 
-            VStack(spacing: 4) {
-                modeRow(label: "跟随系统", description: "深色模式白色边框，浅色模式黑色边框", isSelected: !settings.useCustomPillColor) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        settings.useCustomPillColor = false
-                    }
-                }
-                modeRow(label: "自定义颜色", description: "选择喜欢的边框颜色", isSelected: settings.useCustomPillColor) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        settings.useCustomPillColor = true
-                    }
-                }
-            }
+            sliderRow(
+                title: "外撇角半径",
+                value: $settings.pillFlareRadius,
+                range: 4...18,
+                step: 1,
+                hint: "越小越紧，越大越圆"
+            )
+
+            sliderRow(
+                title: "整体额外宽度（单侧）",
+                value: $settings.pillVisualWidthOverhang,
+                range: 0...18,
+                step: 1,
+                hint: "增大可让 P0 更外侧、更圆润"
+            )
+
+            sliderRow(
+                title: "电量/网速槽宽",
+                value: $settings.pillSideSlotWidth,
+                range: 40...72,
+                step: 1,
+                hint: "左右翼信息区宽度"
+            )
+
+            sliderRow(
+                title: "Pill 高度（额外）",
+                value: $settings.pillVisualHeightOverhang,
+                range: 0...10,
+                step: 1,
+                hint: "在 notch 高度基础上额外增加"
+            )
         }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
 
-    private func modeRow(label: String, description: String, isSelected: Bool, onTap: @escaping () -> Void) -> some View {
-        HStack {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 14))
-                .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.system(size: 13)).foregroundColor(.primary)
-                Text(description).font(.system(size: 11)).foregroundColor(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor.opacity(0.1) : Color.clear))
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
-    }
-
-    private var presetSection: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "swatchpalette")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Text("预设颜色")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
-                ForEach(presetColors, id: \.0) { name, color in
-                    VStack(spacing: 4) {
-                        Circle()
-                            .fill(color)
-                            .overlay(
-                                Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
-                            )
-                            .frame(width: 36, height: 36)
-
-                        Text(name)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            settings.useCustomPillColor = true
-                            settings.pillBorderColor = color
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var customColorSection: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "eyedropper")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Text("自定义颜色")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-
-            ColorPicker("边框颜色", selection: $settings.pillBorderColor, supportsOpacity: true)
-                .font(.system(size: 13))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-        }
-    }
-}
-
-// MARK: - General Settings Tab
-
-struct GeneralSettingsTab: View {
-
-    @State private var launchAtLogin: Bool = false
-    @State private var accessibilityGranted: Bool = false
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
-    @State private var showQuitConfirm = false
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                startupSection
-                permissionsSection
-                quitSection
-            }
-            .padding(20)
-        }
-        .onAppear {
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-            accessibilityGranted = AXIsProcessTrusted()
-        }
-        .onReceive(timer) { _ in
-            let current = AXIsProcessTrusted()
-            if current != accessibilityGranted {
-                accessibilityGranted = current
-            }
-        }
-    }
-
-    // MARK: - Startup
-
-    private var startupSection: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "power")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Text("启动")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-
+    private func sliderRow(
+        title: String,
+        value: Binding<CGFloat>,
+        range: ClosedRange<CGFloat>,
+        step: CGFloat,
+        hint: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("开机自启动")
-                        .font(.system(size: 13))
-                        .foregroundColor(.primary)
-                    Text("登录 macOS 时自动启动不灵灵动岛")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Toggle("", isOn: $launchAtLogin)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .onChange(of: launchAtLogin) { newValue in
-                        toggleLaunchAtLogin(newValue)
-                    }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-        }
-    }
-
-    private func toggleLaunchAtLogin(_ enable: Bool) {
-        do {
-            if enable {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-        }
-    }
-
-    // MARK: - Permissions
-
-    private var permissionsSection: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.shield")
+                Text("\(Int(value.wrappedValue.rounded()))")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Text("权限设置")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
-                Spacer()
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
-
-            HStack {
-                Image(systemName: "hand.raised")
-                    .font(.system(size: 14))
-                    .foregroundColor(accessibilityGranted ? .green : .orange)
-                    .frame(width: 24)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("辅助功能")
-                            .font(.system(size: 13))
-                            .foregroundColor(.primary)
-                        Text(accessibilityGranted ? "已授权" : "未授权")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(accessibilityGranted ? .green : .orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule().fill(accessibilityGranted ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
-                            )
-                    }
-                    Text("用于监听全局鼠标事件（点击刘海、点击外部收起）")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                Button {
-                    if !accessibilityGranted {
-                        requestAccessibility()
-                    }
-                } label: {
-                    Text(accessibilityGranted ? "已授权" : "去授权")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(accessibilityGranted ? .secondary : .white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(accessibilityGranted ? Color.primary.opacity(0.06) : Color.accentColor)
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(accessibilityGranted)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+            Slider(
+                value: Binding(
+                    get: { value.wrappedValue },
+                    set: { value.wrappedValue = min(max($0, range.lowerBound), range.upperBound) }
+                ),
+                in: range,
+                step: step
+            )
+            Text(hint)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         }
-    }
-
-    // MARK: - Quit
-
-    private var quitSection: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "rectangle.portrait.and.arrow.right")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Text("退出")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-
-            Button {
-                showQuitConfirm = true
-            } label: {
-                HStack {
-                    Image(systemName: "power")
-                        .font(.system(size: 12))
-                    Text("退出不灵灵动岛")
-                        .font(.system(size: 13))
-                }
-                .foregroundColor(.red)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.1)))
-            }
-            .buttonStyle(.plain)
-            .alert("确认退出？", isPresented: $showQuitConfirm) {
-                Button("取消", role: .cancel) { }
-                Button("退出", role: .destructive) {
-                    NSApplication.shared.terminate(nil)
-                }
-            } message: {
-                Text("退出后将无法通过刘海快速启动应用。")
-            }
-        }
-    }
-
-    private func requestAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        .padding(.vertical, 6)
     }
 }
 

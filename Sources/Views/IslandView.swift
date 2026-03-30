@@ -30,16 +30,44 @@ struct IslandView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.clear.allowsHitTesting(false)
+        GeometryReader { geo in
+            let progress: CGFloat = viewModel.state == .expanded ? 1 : 0
+            let totalW = PillLayout.totalWidth(notch: notch, left: settings.pillLeftSlot, right: settings.pillRightSlot)
+            let pillVisualW = totalW + 2 * PillLayout.visualWidthOverhang
+            let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
 
-            if viewModel.state == .collapsed {
+            // Expanded content occupies the full hosting area.
+            let expandedSize = geo.size
+
+            let morphShape = IslandMorphShape(
+                progress: progress,
+                pillSize: CGSize(width: pillVisualW, height: pillH),
+                expandedSize: expandedSize,
+                pillTopRadius: settings.pillFlareRadius,
+                expandedTopRadius: Self.expandedTopCornerRadius,
+                pillTopFlare: 0.52,
+                expandedTopFlare: 0.64,
+                pillBottomFillet: 12,
+                expandedBottomFillet: Self.expandedBottomFillet,
+                pillBodyInsetX: PillLayout.visualWidthOverhang
+            )
+
+            ZStack(alignment: .top) {
+                // One continuous black surface that morphs from pill -> panel.
+                morphShape
+                    .fill(Color.black, style: FillStyle(antialiased: false))
+                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 8, y: 3)
+
                 collapsedView
-                    .transition(IslandPanelViewTransition.collapsedBranch)
-            } else {
+                    .opacity(1 - progress)
+                    .allowsHitTesting(false)
+
                 expandedView
-                    .transition(IslandPanelViewTransition.expandedBranch)
+                    .opacity(progress)
+                    .allowsHitTesting(viewModel.state == .expanded)
             }
+            .clipShape(morphShape, style: FillStyle(antialiased: false))
+            .animation(settings.expandAnimation.animation, value: viewModel.state)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -88,9 +116,10 @@ struct IslandView: View {
     /// 收缩态：底角为与边相切的圆弧（非 cornerRadius 近似曲线）。
     private var pillShape: FlaredTopTangentBottomRectangle {
         FlaredTopTangentBottomRectangle(
-            topConvexRadius: 12,
+            topConvexRadius: settings.pillFlareRadius,
             topCornerFlare: 0.52,
-            bottomFilletRadius: 12
+            bottomFilletRadius: 12,
+            bodyInsetX: PillLayout.visualWidthOverhang
         )
     }
 
@@ -107,10 +136,10 @@ struct IslandView: View {
 
     private var collapsedView: some View {
         let totalW = PillLayout.totalWidth(notch: notch, left: settings.pillLeftSlot, right: settings.pillRightSlot)
+        let visualW = totalW + 2 * PillLayout.visualWidthOverhang
         let coreW = PillLayout.coreNotchWidth(notch: notch)
         let hasLeft = settings.pillLeftSlot != .none
         let hasRight = settings.pillRightSlot != .none
-        let pillExtended = hasLeft || hasRight
 
         return HStack(spacing: 0) {
             if hasLeft {
@@ -119,8 +148,6 @@ struct IslandView: View {
                     pillOneSide(slot: settings.pillLeftSlot, side: .left)
                 }
                 .frame(width: PillLayout.leftWingTotalWidth(left: settings.pillLeftSlot), height: notch.notchHeight)
-            } else if pillExtended {
-                Color.clear.frame(width: PillLayout.pillEndInset)
             }
 
             Color.clear.frame(width: coreW)
@@ -131,11 +158,10 @@ struct IslandView: View {
                     pillOneSide(slot: settings.pillRightSlot, side: .right)
                 }
                 .frame(width: PillLayout.rightWingTotalWidth(right: settings.pillRightSlot), height: notch.notchHeight)
-            } else if pillExtended {
-                Color.clear.frame(width: PillLayout.pillEndInset)
             }
         }
         .frame(width: totalW, height: notch.notchHeight + PillLayout.visualHeightOverhang)
+        .frame(width: visualW, alignment: .center)
         .background(
             pillShape
                 .fill(Color.black)
@@ -172,19 +198,27 @@ struct IslandView: View {
             .frame(maxWidth: .infinity, alignment: alignment)
             .padding(side == .left ? .trailing : .leading, innerPad)
         case .networkSpeed:
-            VStack(alignment: .center, spacing: 1) {
-                Text(pillHud.uploadText)
-                    .font(.system(size: 8))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .multilineTextAlignment(.center)
-                Text(pillHud.downloadText)
-                    .font(.system(size: 8))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 8, weight: .semibold))
+                        .frame(width: 10, alignment: .center)
+                    Text(pillHud.uploadRateText)
+                        .font(.system(size: 8))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .frame(width: 10, alignment: .center)
+                    Text(pillHud.downloadRateText)
+                        .font(.system(size: 8))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
             .foregroundStyle(collapsedPillForeground.opacity(0.9))
             .frame(maxWidth: .infinity, alignment: alignment)
@@ -346,10 +380,11 @@ struct IslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(
             expandedShape
-                .fill(Color.black)
+                .fill(Color.black, style: FillStyle(antialiased: false))
                 .shadow(color: .black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 8, y: 3)
         )
-        .clipShape(expandedShape)
+        // Avoid a light fringe around the panel edge when composited over the desktop.
+        .clipShape(expandedShape, style: FillStyle(antialiased: false))
         .environment(\.useLightContentOnIslandPanel, true)
         .onChange(of: viewModel.state) { _ in
             exitLaunchpadEditMode()

@@ -117,6 +117,9 @@ struct LaunchpadGridView: View {
         .onAppear {
             folderManager.buildLayoutIfNeeded(from: allApps)
         }
+        .onChange(of: allApps.count) { _ in
+            folderManager.buildLayoutIfNeeded(from: allApps)
+        }
     }
 
     private func exitEditMode() {
