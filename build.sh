@@ -27,7 +27,37 @@ build_with_swiftc() {
 }
 
 echo "Building $APP_NAME (release)…"
-if ! build_with_swiftpm 2>/dev/null; then
+SPM_OUTPUT_FILE="$(mktemp)"
+SPM_EXIT=0
+if ! build_with_swiftpm >"$SPM_OUTPUT_FILE" 2>&1; then
+  SPM_EXIT=$?
+fi
+SPM_OUTPUT="$(cat "$SPM_OUTPUT_FILE")"
+rm -f "$SPM_OUTPUT_FILE"
+
+if [[ $SPM_EXIT -ne 0 ]]; then
+  # IDE 正在写入源码时，SwiftPM 可能报 input file modified；重试一次可恢复。
+  if [[ "$SPM_OUTPUT" == *"was modified during the build"* ]]; then
+    echo "检测到构建期间文件变更，正在重试一次 SwiftPM 构建…"
+    SPM_OUTPUT_FILE="$(mktemp)"
+    SPM_EXIT=0
+    if ! build_with_swiftpm >"$SPM_OUTPUT_FILE" 2>&1; then
+      SPM_EXIT=$?
+    fi
+    SPM_OUTPUT="$(cat "$SPM_OUTPUT_FILE")"
+    rm -f "$SPM_OUTPUT_FILE"
+  fi
+fi
+
+if [[ $SPM_EXIT -eq 0 ]]; then
+  echo "$SPM_OUTPUT"
+else
+  echo "$SPM_OUTPUT"
+  # 有外部包依赖时，不能降级到 swiftc（会缺失模块）。
+  if [[ -f "$SCRIPT_DIR/Package.swift" ]] && /usr/bin/grep -q "\.package(" "$SCRIPT_DIR/Package.swift"; then
+    echo "错误: SwiftPM 构建失败，且检测到外部 Swift 包依赖，无法降级为纯 swiftc 编译。"
+    exit "$SPM_EXIT"
+  fi
   build_with_swiftc
 fi
 

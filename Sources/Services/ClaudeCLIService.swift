@@ -1,15 +1,11 @@
 import Foundation
 
-/// 通过本机 Claude Code CLI 运行命令，并将输出流式推送到 UI。
+/// 管理本机 Claude Code CLI 的安装检测与会话元数据。
 @MainActor
 final class ClaudeCLIService: ObservableObject {
 
-    @Published var output: String = ""
     @Published var isRunning: Bool = false
     @Published var lastError: String?
-
-    /// 最近一次尝试的命令描述（便于 UI 提示）。
-    @Published var lastCommandDescription: String?
 
     /// 解析出的 Claude CLI 可执行路径及安装状态。
     enum InstallStatus {
@@ -23,11 +19,6 @@ final class ClaudeCLIService: ObservableObject {
 
     /// 当前选定的项目目录，作为 CLI 运行时的工作目录。
     @Published var projectDirectory: URL?
-
-    private var process: Process?
-    private var outputPipe: Pipe?
-    private var errorPipe: Pipe?
-    private var inputPipe: Pipe?
 
     // MARK: - Install detection
 
@@ -45,8 +36,16 @@ final class ClaudeCLIService: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async {
             let env = ProcessInfo.processInfo.environment
-            let candidate = env["CLAUDE_CLI_PATH"] ?? "/usr/local/bin/claude"
             let fm = FileManager.default
+            let explicit = env["CLAUDE_CLI_PATH"]
+
+            // GUI App 进程的 PATH 常常缺少 Homebrew 路径，优先做一轮常见位置硬检测。
+            let pathCandidates: [String] = [
+                explicit,
+                "/opt/homebrew/bin/claude",
+                "/usr/local/bin/claude",
+                "/usr/bin/claude",
+            ].compactMap { $0 }
 
             func publish(_ status: InstallStatus) {
                 Task { @MainActor in
@@ -54,15 +53,25 @@ final class ClaudeCLIService: ObservableObject {
                 }
             }
 
-            if fm.isExecutableFile(atPath: candidate) {
-                publish(.installed(path: candidate))
-                return
+            for candidate in pathCandidates {
+                if fm.isExecutableFile(atPath: candidate) {
+                    publish(.installed(path: candidate))
+                    return
+                }
             }
 
             // 退而求其次，通过 `which claude` 查找。
             let whichProc = Process()
             whichProc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             whichProc.arguments = ["which", "claude"]
+            var whichEnv = env
+            let fallbackPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            if let current = whichEnv["PATH"], !current.isEmpty {
+                whichEnv["PATH"] = "\(current):\(fallbackPath)"
+            } else {
+                whichEnv["PATH"] = fallbackPath
+            }
+            whichProc.environment = whichEnv
             let pipe = Pipe()
             whichProc.standardOutput = pipe
 
@@ -83,102 +92,12 @@ final class ClaudeCLIService: ObservableObject {
         }
     }
 
-    /// 在选定目录中启动 Claude Code CLI（交互会话）。
-    func runInteractiveSession(in workingDirectory: URL) {
-        if isRunning {
-            // 已在运行时忽略重复启动，避免进程叠加。
-            return
+    /// 当前解析出的 Claude CLI 可执行路径（若已安装）。
+    var resolvedExecutablePath: String? {
+        if case let .installed(path) = installStatus {
+            return path
         }
-
-        guard case let .installed(cliPath) = installStatus else {
-            lastError = "尚未检测到 Claude CLI，请确认已安装并可在终端执行 `claude`。"
-            return
-        }
-
-        output = ""
-        lastError = nil
-        lastCommandDescription = "cd \(workingDirectory.path) && claude"
-
-        let proc = Process()
-        // Use `script` to allocate a pseudo-TTY so Claude can render interactive UI.
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-        proc.arguments = ["-q", "/dev/null", cliPath]
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        let inPipe = Pipe()
-        proc.standardOutput = outPipe
-        proc.standardError = errPipe
-        proc.standardInput = inPipe
-
-        proc.currentDirectoryURL = workingDirectory
-
-        outputPipe = outPipe
-        errorPipe = errPipe
-        inputPipe = inPipe
-
-        isRunning = true
-
-        let handleStdout = outPipe.fileHandleForReading
-        handleStdout.readabilityHandler = { [weak self] h in
-            guard let self else { return }
-            let data = h.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
-            Task { @MainActor in
-                self.output.append(chunk)
-            }
-        }
-
-        let handleStderr = errPipe.fileHandleForReading
-        handleStderr.readabilityHandler = { [weak self] h in
-            guard let self else { return }
-            let data = h.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
-            Task { @MainActor in
-                self.output.append(chunk)
-            }
-        }
-
-        proc.terminationHandler = { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.isRunning = false
-                self.cleanupPipes()
-            }
-        }
-
-        do {
-            try proc.run()
-            process = proc
-        } catch {
-            isRunning = false
-            lastError = "启动 Claude CLI 失败：\(error.localizedDescription)\n请确认已安装，并在环境变量 CLAUDE_CLI_PATH 或 `/usr/local/bin/claude` 中可用。"
-            cleanupPipes()
-        }
-    }
-
-    func cancel() {
-        guard let proc = process, proc.isRunning else { return }
-        proc.terminate()
-        process = nil
-        isRunning = false
-        cleanupPipes()
-    }
-
-    /// 向当前 Claude 会话写入一行输入（自动附加换行）。
-    func sendLine(_ line: String) {
-        guard isRunning, let input = inputPipe else { return }
-        let text = line + "\n"
-        guard let data = text.data(using: .utf8) else { return }
-        input.fileHandleForWriting.write(data)
-    }
-
-    private func cleanupPipes() {
-        outputPipe?.fileHandleForReading.readabilityHandler = nil
-        errorPipe?.fileHandleForReading.readabilityHandler = nil
-        outputPipe = nil
-        errorPipe = nil
-        inputPipe = nil
+        return nil
     }
 }
 

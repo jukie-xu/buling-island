@@ -9,11 +9,15 @@ struct IslandView: View {
     @StateObject private var claudeCLI = ClaudeCLIService()
     @State private var isLaunchpadEditing = false
     @State private var expandedContentMode: ExpandedContentMode = .appStore
-    @State private var claudeInputLine: String = ""
+    @State private var claudeInteractionHint: String?
+    @State private var claudePillStatusText: String?
+    @State private var claudePillStatusTone: String = "info"
+    @State private var claudeRightSlotFlashVisible = false
+    @State private var claudeRightSlotFlashPulse = false
+    @State private var lastClaudeFlashAt: Date = .distantPast
 
     private enum ExpandedContentMode {
         case appStore
-        case terminal
         case claude
     }
 
@@ -92,6 +96,7 @@ struct IslandView: View {
                 syncCollapsedPillHitRect()
             } else {
                 pillHud.stop()
+                stopClaudeRightSlotFlash()
             }
         }
         .onChange(of: settings.pillLeftSlot) { _ in syncCollapsedPillHitRect() }
@@ -103,6 +108,15 @@ struct IslandView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             syncCollapsedPillHitRect()
+        }
+        .onChange(of: claudeInteractionHint) { hint in
+            guard hint != nil else { return }
+            triggerClaudeRightSlotFlashIfNeeded()
+        }
+        .onChange(of: claudePillStatusTone) { tone in
+            if tone == "warn" || tone == "error" {
+                triggerClaudeRightSlotFlashIfNeeded()
+            }
         }
     }
 
@@ -150,22 +164,59 @@ struct IslandView: View {
         let coreW = PillLayout.coreNotchWidth(notch: notch)
         let hasLeft = settings.pillLeftSlot != .none
         let hasRight = settings.pillRightSlot != .none
+        let isBatteryAccessoryVisible = pillHud.batteryState.isCharging || pillHud.batteryState.isExternalPowered
+        let singleBatteryLeftOnly = (settings.pillLeftSlot == .battery && settings.pillRightSlot == .none)
+        let singleBatteryRightOnly = (settings.pillLeftSlot == .none && settings.pillRightSlot == .battery)
+        let singleBatteryOnly = (singleBatteryLeftOnly || singleBatteryRightOnly) && !isBatteryAccessoryVisible
 
         return HStack(spacing: 0) {
+            if singleBatteryOnly {
+                let halfW = totalW / 2
+                if singleBatteryLeftOnly {
+                    HStack(spacing: 0) {
+                        batteryCompactContent()
+                            .frame(width: halfW, height: notch.notchHeight, alignment: .center)
+                        Color.clear.frame(width: halfW, height: notch.notchHeight)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        Color.clear.frame(width: halfW, height: notch.notchHeight)
+                        batteryCompactContent()
+                            .frame(width: halfW, height: notch.notchHeight, alignment: .center)
+                    }
+                }
+            } else
             if hasLeft {
                 ZStack {
                     Color.clear
-                    pillOneSide(slot: settings.pillLeftSlot, side: .left)
+                    pillOneSide(
+                        slot: settings.pillLeftSlot,
+                        side: .left,
+                        centerForSingleBattery: singleBatteryOnly && singleBatteryLeftOnly
+                    )
                 }
                 .frame(width: PillLayout.leftWingTotalWidth(left: settings.pillLeftSlot), height: notch.notchHeight)
             }
 
-            Color.clear.frame(width: coreW)
+            ZStack {
+                Color.clear
+                claudePillCoreHint
+            }
+            .frame(width: coreW, height: notch.notchHeight)
 
             if hasRight {
                 ZStack {
                     Color.clear
-                    pillOneSide(slot: settings.pillRightSlot, side: .right)
+                    if claudeRightSlotFlashVisible {
+                        claudeCodeLogoMark(size: 13)
+                            .opacity(claudeRightSlotFlashPulse ? 0.2 : 1)
+                    } else {
+                        pillOneSide(
+                            slot: settings.pillRightSlot,
+                            side: .right,
+                            centerForSingleBattery: singleBatteryOnly && singleBatteryRightOnly
+                        )
+                    }
                 }
                 .frame(width: PillLayout.rightWingTotalWidth(right: settings.pillRightSlot), height: notch.notchHeight)
             }
@@ -180,11 +231,67 @@ struct IslandView: View {
         .offset(y: -PillLayout.visualHeightOverhang / 2)
     }
 
+    private func batteryCompactContent() -> some View {
+        HStack(spacing: 4) {
+            ZStack {
+                Image(systemName: batteryPillBaseSymbol(pillHud.batteryState))
+                    .font(.system(size: 19))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(pillBatteryIconColor)
+                pillBatteryPercentLabel()
+                    .offset(
+                        x: Self.batteryPercentOpticalOffsetX(pillHud.batteryState.percent),
+                        y: 0.5
+                    )
+            }
+            .fixedSize()
+        }
+        .fixedSize()
+        .offset(x: -20)
+    }
+
     @ViewBuilder
-    private func pillOneSide(slot: PillSideWidget, side: CollapsedWingSide) -> some View {
+    private var claudePillCoreHint: some View {
+        if let text = claudePillStatusText, !text.isEmpty {
+            let isWarning = claudePillStatusTone == "warn"
+            let isError = claudePillStatusTone == "error"
+            let isSuccess = claudePillStatusTone == "success"
+            let iconName: String = {
+                if isError { return "xmark.octagon.fill" }
+                if isWarning || claudeInteractionHint != nil { return "exclamationmark.triangle.fill" }
+                if isSuccess { return "checkmark.circle.fill" }
+                if claudePillStatusTone == "busy" { return "hourglass" }
+                return "terminal"
+            }()
+            let tint: Color = {
+                if isError { return Color.red.opacity(0.95) }
+                if isWarning || claudeInteractionHint != nil { return Color.orange.opacity(0.95) }
+                if isSuccess { return Color.green.opacity(0.92) }
+                if claudePillStatusTone == "busy" { return Color.blue.opacity(0.9) }
+                return Color.white.opacity(0.72)
+            }()
+            HStack(spacing: 4) {
+                Image(systemName: iconName)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(tint)
+                Text(text)
+                    .font(.system(size: 8, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(tint)
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .center)
+        } else {
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func pillOneSide(slot: PillSideWidget, side: CollapsedWingSide, centerForSingleBattery: Bool = false) -> some View {
         // Pin content to the notch vertical edge (inner edge), not the pill outer edge.
         let innerPad = PillLayout.notchAdjacentGap + PillLayout.contentInsetFromNotchEdge
-        let alignment: Alignment = (side == .left) ? .trailing : .leading
+        let alignment: Alignment = centerForSingleBattery ? .center : ((side == .left) ? .trailing : .leading)
 
         switch slot {
         case .none:
@@ -206,7 +313,7 @@ struct IslandView: View {
                 pillBatteryPowerAccessory(state: pillHud.batteryState)
             }
             .frame(maxWidth: .infinity, alignment: alignment)
-            .padding(side == .left ? .trailing : .leading, innerPad)
+            .padding(side == .left ? .trailing : .leading, centerForSingleBattery ? 0 : innerPad)
         case .networkSpeed:
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -324,16 +431,7 @@ struct IslandView: View {
             HStack(spacing: 0) {
                 HStack(spacing: 6) {
                     appStoreModeButton(mode: .appStore)
-                    modeIconButton(
-                        systemName: "terminal",
-                        mode: .terminal,
-                        accessibilityLabel: "终端面板"
-                    )
-                    modeIconButton(
-                        systemName: "square.grid.3x1.folder.badge.plus",
-                        mode: .claude,
-                        accessibilityLabel: "Claude 面板"
-                    )
+                    claudeModeButton(mode: .claude)
                 }
                 .padding(.leading, 10)
 
@@ -396,10 +494,8 @@ struct IslandView: View {
                         )
                     }
                 }
-            case .terminal:
-                terminalPlaceholderView
             case .claude:
-                claudePanelPlaceholderView
+                claudePanelView
             }
         }
         // Leave horizontal margins for the top flare geometry; body width stays the same.
@@ -425,28 +521,6 @@ struct IslandView: View {
         }
     }
 
-    private func modeIconButton(
-        systemName: String,
-        mode: ExpandedContentMode,
-        accessibilityLabel: String
-    ) -> some View {
-        let selected = expandedContentMode == mode
-        return Button {
-            expandedContentMode = mode
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
     private func appStoreModeButton(mode: ExpandedContentMode) -> some View {
         let selected = expandedContentMode == mode
         return Button {
@@ -465,78 +539,54 @@ struct IslandView: View {
         .accessibilityLabel("应用面板")
     }
 
-    private var terminalPlaceholderView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.green.opacity(0.92))
-                Text("终端")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-            }
-
-            Text("终端模式占位页（后续可接入真实 shell 会话）。")
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.6))
-
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-                .overlay(alignment: .topLeading) {
-                    Text("$ echo \"hello buling\"")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.72))
-                        .padding(12)
-                }
-                .frame(height: 140)
-
-            Spacer(minLength: 0)
+    private func claudeCodeLogoMark(size: CGFloat = 16) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color(red: 0.95, green: 0.54, blue: 0.22))
+            ClaudeCodeLogoShape()
+                .fill(Color.white)
+                .padding(size * 0.12)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(width: size, height: size)
     }
 
-    private var claudePanelPlaceholderView: some View {
+    private func claudeModeButton(mode: ExpandedContentMode) -> some View {
+        let selected = expandedContentMode == mode
+        return Button {
+            expandedContentMode = mode
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                ClaudeCodeLogoShape()
+                    .fill(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.65))
+                    .padding(4.5)
+            }
+            .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Claude 面板")
+    }
+
+    private var claudePanelView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "square.grid.3x1.folder.badge.plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.orange.opacity(0.92))
+                claudeCodeLogoMark(size: 16)
                 Text("Claude")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.92))
             }
 
-            switch claudeCLI.installStatus {
-            case .unknown, .checking:
-                Text("正在检测本机 Claude CLI…")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-            case .missing(let reason):
-                Text(reason)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-            case .installed(let path):
-                Text("通过 Claude Code CLI 运行代码相关任务。当前检测到路径：\(path)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-            }
+            claudeInstallStatusSection
 
             if case .installed = claudeCLI.installStatus {
                 if claudeCLI.projectDirectory == nil {
                     projectSelectionSection
                 } else {
                     claudeSessionSection
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
-
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -546,8 +596,10 @@ struct IslandView: View {
             claudeCLI.ensureDetected()
         }
         .onChange(of: claudeCLI.projectDirectory) { dir in
-            guard let dir else { return }
-            claudeCLI.runInteractiveSession(in: dir)
+            guard dir != nil else { return }
+            if !claudeCLI.isRunning {
+                claudeCLI.isRunning = true
+            }
         }
     }
 
@@ -595,6 +647,27 @@ struct IslandView: View {
         }
     }
 
+    private var claudeInstallStatusSection: some View {
+        Group {
+            switch claudeCLI.installStatus {
+            case .unknown, .checking:
+                Text("正在检测本机 Claude CLI…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+            case .missing(let reason):
+                Text(reason)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+            case .installed:
+                EmptyView()
+            }
+        }
+    }
+
     private var claudeSessionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -612,28 +685,50 @@ struct IslandView: View {
                 .buttonStyle(.plain)
             }
 
-            HStack(spacing: 10) {
-                if claudeCLI.isRunning {
-                    Button {
-                        claudeCLI.cancel()
-                    } label: {
-                        Text("停止")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
-                            )
+            if let dir = claudeCLI.projectDirectory,
+               case let .installed(path) = claudeCLI.installStatus {
+
+                HStack(spacing: 10) {
+                    if claudeCLI.isRunning {
+                        Button {
+                            claudeCLI.isRunning = false
+                        } label: {
+                            Text("停止")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            claudeCLI.isRunning = true
+                        } label: {
+                            Text("启动")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.white.opacity(0.9))
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                } else if let dir = claudeCLI.projectDirectory {
+
                     Button {
-                        claudeCLI.runInteractiveSession(in: dir)
+                        claudeCLI.isRunning = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            claudeCLI.isRunning = true
+                        }
                     } label: {
                         Text("重新启动")
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                             .foregroundStyle(.white.opacity(0.85))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
@@ -643,81 +738,46 @@ struct IslandView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                }
-                Spacer()
-            }
 
-            if claudeCLI.isRunning {
-                HStack(spacing: 8) {
-                    TextField("向 Claude 会话输入内容…", text: $claudeInputLine)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.white)
+                    Spacer()
+                }
+
+                if let hint = claudeInteractionHint, !hint.isEmpty {
+                    Text(hint)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.orange.opacity(0.95))
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
+                        .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.06))
+                                .fill(Color.orange.opacity(0.12))
                         )
-                        .onSubmit {
-                            sendClaudeLine()
-                        }
-
-                    Button {
-                        sendClaudeLine()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(claudeInputLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-            }
 
-            outputSection
-        }
-    }
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay {
+                        ClaudeTerminalView(
+                            cliPath: path,
+                            workingDirectory: dir,
+                            isRunning: $claudeCLI.isRunning,
+                            lastError: $claudeCLI.lastError,
+                            interactionHint: $claudeInteractionHint,
+                            latestStatusText: $claudePillStatusText,
+                            latestStatusTone: $claudePillStatusTone
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-    private var outputSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("输出")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                Spacer()
-                if let desc = claudeCLI.lastCommandDescription, !desc.isEmpty {
-                    Text(desc)
+                if let error = claudeCLI.lastError {
+                    Text(error)
                         .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .foregroundStyle(Color.red.opacity(0.9))
                 }
-            }
-
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-                .overlay {
-                    ScrollView {
-                        Text(
-                            claudeCLI.output.isEmpty
-                            ? "等待 Claude CLI 输出…"
-                            : claudeCLI.output
-                        )
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.82))
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(8)
-                    }
-                }
-                .frame(minHeight: 120, maxHeight: 220)
-
-            if let error = claudeCLI.lastError {
-                Text(error)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.red.opacity(0.9))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func exitLaunchpadEditMode() {
@@ -729,6 +789,9 @@ struct IslandView: View {
     }
 
     private func pickProjectDirectory() {
+        // 目录选择期间关闭“点击外部收起”，避免面板被误判收起。
+        PanelManager.shared.stopClickOutsideMonitor()
+
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -741,16 +804,39 @@ struct IslandView: View {
                 if response == .OK, let url = panel.urls.first {
                     claudeCLI.projectDirectory = url
                 }
+                ensureClaudePanelExpanded()
             }
         } else if panel.runModal() == .OK, let url = panel.urls.first {
             claudeCLI.projectDirectory = url
+            ensureClaudePanelExpanded()
+        } else {
+            ensureClaudePanelExpanded()
         }
     }
 
-    private func sendClaudeLine() {
-        let line = claudeInputLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !line.isEmpty else { return }
-        claudeCLI.sendLine(line)
-        claudeInputLine = ""
+    private func ensureClaudePanelExpanded() {
+        if viewModel.state != .expanded {
+            viewModel.toggle()
+        }
+        PanelManager.shared.setExpanded()
     }
+
+    private func triggerClaudeRightSlotFlashIfNeeded() {
+        if claudeRightSlotFlashVisible { return }
+        let now = Date()
+        // 防抖：避免 Claude 高频输出时连续闪烁影响可读性。
+        guard now.timeIntervalSince(lastClaudeFlashAt) > 1.2 else { return }
+        lastClaudeFlashAt = now
+        claudeRightSlotFlashVisible = true
+        claudeRightSlotFlashPulse = false
+        withAnimation(.easeInOut(duration: 0.95).repeatForever(autoreverses: true)) {
+            claudeRightSlotFlashPulse = true
+        }
+    }
+
+    private func stopClaudeRightSlotFlash() {
+        claudeRightSlotFlashVisible = false
+        claudeRightSlotFlashPulse = false
+    }
+
 }

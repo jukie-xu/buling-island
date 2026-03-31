@@ -129,13 +129,13 @@ final class SettingsManager: ObservableObject {
         self.pillFlareRadius = CGFloat(flareRadius ?? 4)
 
         let overhang = UserDefaults.standard.object(forKey: pillVisualWidthOverhangKey) as? Double
-        self.pillVisualWidthOverhang = CGFloat(overhang ?? 4)
+        self.pillVisualWidthOverhang = CGFloat(overhang ?? 3)
 
         let heightOverhang = UserDefaults.standard.object(forKey: pillVisualHeightOverhangKey) as? Double
         self.pillVisualHeightOverhang = CGFloat(heightOverhang ?? 0)
 
         let slotW = UserDefaults.standard.object(forKey: pillSideSlotWidthKey) as? Double
-        self.pillSideSlotWidth = CGFloat(slotW ?? 54)
+        self.pillSideSlotWidth = CGFloat(slotW ?? 52)
     }
 
     private func savePillColor() {
