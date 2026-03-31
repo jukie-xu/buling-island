@@ -46,7 +46,8 @@ struct IslandView: View {
             let progress: CGFloat = viewModel.state == .expanded ? 1 : 0
             let totalW = PillLayout.totalWidth(notch: notch, left: settings.pillLeftSlot, right: settings.pillRightSlot)
             let pillVisualW = totalW + 2 * PillLayout.visualWidthOverhang
-            let pillH = notch.notchHeight + PillLayout.visualHeightOverhang + claudeHintExpansionHeight
+            let effectiveVisualHeightOverhang = max(PillLayout.visualHeightOverhang, 2)
+            let pillH = notch.notchHeight + effectiveVisualHeightOverhang + claudeHintExpansionHeight
 
             // Expanded content occupies the full hosting area.
             let expandedSize = geo.size
@@ -190,6 +191,7 @@ struct IslandView: View {
                         HStack(spacing: 0) {
                             batteryCompactContent()
                                 .frame(width: halfW, height: notch.notchHeight, alignment: .center)
+                            .offset(x: -15)
                             Color.clear.frame(width: halfW, height: notch.notchHeight)
                         }
                     } else {
@@ -197,6 +199,7 @@ struct IslandView: View {
                             Color.clear.frame(width: halfW, height: notch.notchHeight)
                             batteryCompactContent()
                                 .frame(width: halfW, height: notch.notchHeight, alignment: .center)
+                            .offset(x: -15)
                         }
                     }
                 } else
@@ -238,14 +241,14 @@ struct IslandView: View {
                     .frame(height: claudeHintExpansionHeight)
             }
         }
-        .frame(width: totalW, height: notch.notchHeight + PillLayout.visualHeightOverhang + claudeHintExpansionHeight, alignment: .top)
+        .frame(width: totalW, height: notch.notchHeight + max(PillLayout.visualHeightOverhang, 2) + claudeHintExpansionHeight, alignment: .top)
         .frame(width: visualW, alignment: .center)
         .background(
             pillShape
                 .fill(Color.black)
         )
         .clipShape(pillShape)
-        .offset(y: -PillLayout.visualHeightOverhang / 2)
+        .offset(y: -max(PillLayout.visualHeightOverhang, 2) / 2)
         .animation(.easeInOut(duration: 0.22), value: claudeHintExpansionHeight)
     }
 
@@ -265,7 +268,6 @@ struct IslandView: View {
             .fixedSize()
         }
         .fixedSize()
-        .offset(x: -20)
     }
 
     @ViewBuilder
@@ -310,6 +312,8 @@ struct IslandView: View {
         // Pin content to the notch vertical edge (inner edge), not the pill outer edge.
         let innerPad = PillLayout.notchAdjacentGap + PillLayout.contentInsetFromNotchEdge
         let alignment: Alignment = centerForSingleBattery ? .center : ((side == .left) ? .trailing : .leading)
+        let shouldBiasBatteryOutward = !centerForSingleBattery && !pillHud.batteryState.isCharging && !pillHud.batteryState.isExternalPowered
+        let batteryOutwardOffset: CGFloat = shouldBiasBatteryOutward ? ((side == .left) ? -8 : 8) : 0
 
         switch slot {
         case .none:
@@ -332,6 +336,7 @@ struct IslandView: View {
             }
             .frame(maxWidth: .infinity, alignment: alignment)
             .padding(side == .left ? .trailing : .leading, centerForSingleBattery ? 0 : innerPad)
+            .offset(x: batteryOutwardOffset)
         case .networkSpeed:
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
