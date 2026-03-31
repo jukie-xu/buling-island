@@ -284,7 +284,7 @@ final class PanelManager {
         // Expand should always show panel.
         isCollapsedPillHiddenForFullscreen = false
         panel?.ignoresMouseEvents = false
-        panel?.hasShadow = true
+        panel?.hasShadow = false
         panel?.makeKeyAndOrderFront(nil)
         stopPillClickMonitor()
 

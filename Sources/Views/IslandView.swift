@@ -6,8 +6,13 @@ struct IslandView: View {
     @ObservedObject var viewModel: IslandViewModel
     @ObservedObject private var settings = SettingsManager.shared
     @StateObject private var pillHud = PillHudViewModel()
-    @Environment(\.colorScheme) private var colorScheme
     @State private var isLaunchpadEditing = false
+    @State private var expandedContentMode: ExpandedContentMode = .appStore
+
+    private enum ExpandedContentMode {
+        case appStore
+        case terminal
+    }
 
     private var fillColor: Color {
         .primary
@@ -56,7 +61,6 @@ struct IslandView: View {
                 // One continuous black surface that morphs from pill -> panel.
                 morphShape
                     .fill(Color.black, style: FillStyle(antialiased: false))
-                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 8, y: 3)
 
                 collapsedView
                     .opacity(1 - progress)
@@ -315,6 +319,16 @@ struct IslandView: View {
         VStack(spacing: 0) {
             // Top bar — flush with screen top, no rounded corners
             HStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    appStoreModeButton(mode: .appStore)
+                    modeIconButton(
+                        systemName: "terminal",
+                        mode: .terminal,
+                        accessibilityLabel: "终端面板"
+                    )
+                }
+                .padding(.leading, 10)
+
                 Color.clear
                     .frame(height: notch.notchHeight)
                     .contentShape(Rectangle())
@@ -337,45 +351,45 @@ struct IslandView: View {
                 .padding(.trailing, 8)
             }
 
-            Rectangle()
-                .fill(Color.white.opacity(0.12))
-                .frame(maxWidth: .infinity)
-                .frame(height: 1)
+            switch expandedContentMode {
+            case .appStore:
+                SearchBarView(text: $viewModel.searchText)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
+                    .onTapGesture {
+                        exitLaunchpadEditMode()
+                    }
 
-            SearchBarView(text: $viewModel.searchText)
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
-                .onTapGesture {
-                    exitLaunchpadEditMode()
-                }
-
-            // Switch view based on display mode (search always uses grid)
-            if !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                AppGridView(
-                    apps: viewModel.filteredApps,
-                    onAppTap: { app in viewModel.launchApp(app) }
-                )
-            } else {
-                switch settings.displayMode {
-                case .grid:
+                // Switch view based on display mode (search always uses grid)
+                if !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
                     AppGridView(
                         apps: viewModel.filteredApps,
                         onAppTap: { app in viewModel.launchApp(app) }
                     )
-                case .alphabetical:
-                    AlphabetGridView(
-                        apps: viewModel.filteredApps,
-                        onAppTap: { app in viewModel.launchApp(app) }
-                    )
-                case .launchpad:
-                    LaunchpadGridView(
-                        allApps: viewModel.allApps,
-                        onAppTap: { app in viewModel.launchApp(app) },
-                        folderManager: FolderManager.shared,
-                        isEditing: $isLaunchpadEditing
-                    )
+                } else {
+                    switch settings.displayMode {
+                    case .grid:
+                        AppGridView(
+                            apps: viewModel.filteredApps,
+                            onAppTap: { app in viewModel.launchApp(app) }
+                        )
+                    case .alphabetical:
+                        AlphabetGridView(
+                            apps: viewModel.filteredApps,
+                            onAppTap: { app in viewModel.launchApp(app) }
+                        )
+                    case .launchpad:
+                        LaunchpadGridView(
+                            allApps: viewModel.allApps,
+                            onAppTap: { app in viewModel.launchApp(app) },
+                            folderManager: FolderManager.shared,
+                            isEditing: $isLaunchpadEditing
+                        )
+                    }
                 }
+            case .terminal:
+                terminalPlaceholderView
             }
         }
         // Leave horizontal margins for the top flare geometry; body width stays the same.
@@ -384,7 +398,6 @@ struct IslandView: View {
         .background(
             expandedShape
                 .fill(Color.black, style: FillStyle(antialiased: false))
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 8, y: 3)
         )
         // Avoid a light fringe around the panel edge when composited over the desktop.
         .clipShape(expandedShape, style: FillStyle(antialiased: false))
@@ -400,6 +413,79 @@ struct IslandView: View {
                 exitLaunchpadEditMode()
             }
         }
+    }
+
+    private func modeIconButton(
+        systemName: String,
+        mode: ExpandedContentMode,
+        accessibilityLabel: String
+    ) -> some View {
+        let selected = expandedContentMode == mode
+        return Button {
+            expandedContentMode = mode
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func appStoreModeButton(mode: ExpandedContentMode) -> some View {
+        let selected = expandedContentMode == mode
+        return Button {
+            expandedContentMode = mode
+        } label: {
+            Text("A")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("应用面板")
+    }
+
+    private var terminalPlaceholderView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.green.opacity(0.92))
+                Text("终端")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+            }
+
+            Text("终端模式占位页（后续可接入真实 shell 会话）。")
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.6))
+
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(alignment: .topLeading) {
+                    Text("$ echo \"hello buling\"")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .padding(12)
+                }
+                .frame(height: 140)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func exitLaunchpadEditMode() {
