@@ -6,12 +6,15 @@ struct IslandView: View {
     @ObservedObject var viewModel: IslandViewModel
     @ObservedObject private var settings = SettingsManager.shared
     @StateObject private var pillHud = PillHudViewModel()
+    @StateObject private var claudeCLI = ClaudeCLIService()
     @State private var isLaunchpadEditing = false
     @State private var expandedContentMode: ExpandedContentMode = .appStore
+    @State private var claudeInputLine: String = ""
 
     private enum ExpandedContentMode {
         case appStore
         case terminal
+        case claude
     }
 
     private var fillColor: Color {
@@ -326,6 +329,11 @@ struct IslandView: View {
                         mode: .terminal,
                         accessibilityLabel: "终端面板"
                     )
+                    modeIconButton(
+                        systemName: "square.grid.3x1.folder.badge.plus",
+                        mode: .claude,
+                        accessibilityLabel: "Claude 面板"
+                    )
                 }
                 .padding(.leading, 10)
 
@@ -390,6 +398,8 @@ struct IslandView: View {
                 }
             case .terminal:
                 terminalPlaceholderView
+            case .claude:
+                claudePanelPlaceholderView
             }
         }
         // Leave horizontal margins for the top flare geometry; body width stays the same.
@@ -488,11 +498,259 @@ struct IslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private var claudePanelPlaceholderView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "square.grid.3x1.folder.badge.plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.orange.opacity(0.92))
+                Text("Claude")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+            }
+
+            switch claudeCLI.installStatus {
+            case .unknown, .checking:
+                Text("正在检测本机 Claude CLI…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+            case .missing(let reason):
+                Text(reason)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+            case .installed(let path):
+                Text("通过 Claude Code CLI 运行代码相关任务。当前检测到路径：\(path)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+
+            if case .installed = claudeCLI.installStatus {
+                if claudeCLI.projectDirectory == nil {
+                    projectSelectionSection
+                } else {
+                    claudeSessionSection
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            claudeCLI.ensureDetected()
+        }
+        .onChange(of: claudeCLI.projectDirectory) { dir in
+            guard let dir else { return }
+            claudeCLI.runInteractiveSession(in: dir)
+        }
+    }
+
+    private var projectSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("项目路径")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+
+            HStack(spacing: 8) {
+                if let dir = claudeCLI.projectDirectory {
+                    Text(dir.path)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text("未选择项目目录")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+
+                Spacer()
+
+                Button {
+                    pickProjectDirectory()
+                } label: {
+                    Text("选择目录")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.9))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+            )
+        }
+    }
+
+    private var claudeSessionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Claude 会话")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                Button {
+                    pickProjectDirectory()
+                } label: {
+                    Text("切换目录")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.82))
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 10) {
+                if claudeCLI.isRunning {
+                    Button {
+                        claudeCLI.cancel()
+                    } label: {
+                        Text("停止")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else if let dir = claudeCLI.projectDirectory {
+                    Button {
+                        claudeCLI.runInteractiveSession(in: dir)
+                    } label: {
+                        Text("重新启动")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+
+            if claudeCLI.isRunning {
+                HStack(spacing: 8) {
+                    TextField("向 Claude 会话输入内容…", text: $claudeInputLine)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.06))
+                        )
+                        .onSubmit {
+                            sendClaudeLine()
+                        }
+
+                    Button {
+                        sendClaudeLine()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(claudeInputLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+
+            outputSection
+        }
+    }
+
+    private var outputSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("输出")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                if let desc = claudeCLI.lastCommandDescription, !desc.isEmpty {
+                    Text(desc)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay {
+                    ScrollView {
+                        Text(
+                            claudeCLI.output.isEmpty
+                            ? "等待 Claude CLI 输出…"
+                            : claudeCLI.output
+                        )
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(8)
+                    }
+                }
+                .frame(minHeight: 120, maxHeight: 220)
+
+            if let error = claudeCLI.lastError {
+                Text(error)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.red.opacity(0.9))
+            }
+        }
+    }
+
     private func exitLaunchpadEditMode() {
         if isLaunchpadEditing {
             withAnimation(.easeInOut(duration: 0.2)) {
                 isLaunchpadEditing = false
             }
         }
+    }
+
+    private func pickProjectDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "选择"
+        panel.title = "选择 Claude 项目目录"
+
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window) { response in
+                if response == .OK, let url = panel.urls.first {
+                    claudeCLI.projectDirectory = url
+                }
+            }
+        } else if panel.runModal() == .OK, let url = panel.urls.first {
+            claudeCLI.projectDirectory = url
+        }
+    }
+
+    private func sendClaudeLine() {
+        let line = claudeInputLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { return }
+        claudeCLI.sendLine(line)
+        claudeInputLine = ""
     }
 }
