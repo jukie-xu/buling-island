@@ -46,7 +46,7 @@ struct IslandView: View {
             let progress: CGFloat = viewModel.state == .expanded ? 1 : 0
             let totalW = PillLayout.totalWidth(notch: notch, left: settings.pillLeftSlot, right: settings.pillRightSlot)
             let pillVisualW = totalW + 2 * PillLayout.visualWidthOverhang
-            let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
+            let pillH = notch.notchHeight + PillLayout.visualHeightOverhang + claudeHintExpansionHeight
 
             // Expanded content occupies the full hosting area.
             let expandedSize = geo.size
@@ -149,6 +149,19 @@ struct IslandView: View {
 
     /// 收缩 pill 为纯黑底，前景固定浅色以保证对比度（与系统浅色/深色模式无关）。
     private var collapsedPillForeground: Color { .white }
+    private var shouldShowClaudeBottomHint: Bool {
+        guard let text = claudePillStatusText, !text.isEmpty else { return false }
+        if claudePillStatusTone == "success" || claudePillStatusTone == "error" || claudePillStatusTone == "warn" {
+            return true
+        }
+        return false
+    }
+    private var claudeHintExpansionHeight: CGFloat {
+        if shouldShowClaudeBottomHint {
+            return 14
+        }
+        return 0
+    }
 
     /// 低功耗模式下电池轮廓用黄色，其余为默认淡化主色。
     private var pillBatteryIconColor: Color {
@@ -169,59 +182,63 @@ struct IslandView: View {
         let singleBatteryRightOnly = (settings.pillLeftSlot == .none && settings.pillRightSlot == .battery)
         let singleBatteryOnly = (singleBatteryLeftOnly || singleBatteryRightOnly) && !isBatteryAccessoryVisible
 
-        return HStack(spacing: 0) {
-            if singleBatteryOnly {
-                let halfW = totalW / 2
-                if singleBatteryLeftOnly {
-                    HStack(spacing: 0) {
-                        batteryCompactContent()
-                            .frame(width: halfW, height: notch.notchHeight, alignment: .center)
-                        Color.clear.frame(width: halfW, height: notch.notchHeight)
-                    }
-                } else {
-                    HStack(spacing: 0) {
-                        Color.clear.frame(width: halfW, height: notch.notchHeight)
-                        batteryCompactContent()
-                            .frame(width: halfW, height: notch.notchHeight, alignment: .center)
-                    }
-                }
-            } else
-            if hasLeft {
-                ZStack {
-                    Color.clear
-                    pillOneSide(
-                        slot: settings.pillLeftSlot,
-                        side: .left,
-                        centerForSingleBattery: singleBatteryOnly && singleBatteryLeftOnly
-                    )
-                }
-                .frame(width: PillLayout.leftWingTotalWidth(left: settings.pillLeftSlot), height: notch.notchHeight)
-            }
-
-            ZStack {
-                Color.clear
-                claudePillCoreHint
-            }
-            .frame(width: coreW, height: notch.notchHeight)
-
-            if hasRight {
-                ZStack {
-                    Color.clear
-                    if claudeRightSlotFlashVisible {
-                        claudeCodeLogoMark(size: 13)
-                            .opacity(claudeRightSlotFlashPulse ? 0.2 : 1)
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                if singleBatteryOnly {
+                    let halfW = totalW / 2
+                    if singleBatteryLeftOnly {
+                        HStack(spacing: 0) {
+                            batteryCompactContent()
+                                .frame(width: halfW, height: notch.notchHeight, alignment: .center)
+                            Color.clear.frame(width: halfW, height: notch.notchHeight)
+                        }
                     } else {
+                        HStack(spacing: 0) {
+                            Color.clear.frame(width: halfW, height: notch.notchHeight)
+                            batteryCompactContent()
+                                .frame(width: halfW, height: notch.notchHeight, alignment: .center)
+                        }
+                    }
+                } else
+                if hasLeft {
+                    ZStack {
+                        Color.clear
                         pillOneSide(
-                            slot: settings.pillRightSlot,
-                            side: .right,
-                            centerForSingleBattery: singleBatteryOnly && singleBatteryRightOnly
+                            slot: settings.pillLeftSlot,
+                            side: .left,
+                            centerForSingleBattery: singleBatteryOnly && singleBatteryLeftOnly
                         )
                     }
+                    .frame(width: PillLayout.leftWingTotalWidth(left: settings.pillLeftSlot), height: notch.notchHeight)
                 }
-                .frame(width: PillLayout.rightWingTotalWidth(right: settings.pillRightSlot), height: notch.notchHeight)
+
+                Color.clear.frame(width: coreW, height: notch.notchHeight)
+
+                if hasRight {
+                    ZStack {
+                        Color.clear
+                        if claudeRightSlotFlashVisible {
+                            claudeCodeLogoMark(size: 13)
+                                .opacity(claudeRightSlotFlashPulse ? 0.2 : 1)
+                        } else {
+                            pillOneSide(
+                                slot: settings.pillRightSlot,
+                                side: .right,
+                                centerForSingleBattery: singleBatteryOnly && singleBatteryRightOnly
+                            )
+                        }
+                    }
+                    .frame(width: PillLayout.rightWingTotalWidth(right: settings.pillRightSlot), height: notch.notchHeight)
+                }
+            }
+            .frame(height: notch.notchHeight)
+
+            if claudeHintExpansionHeight > 0 {
+                claudePillBottomHint
+                    .frame(height: claudeHintExpansionHeight)
             }
         }
-        .frame(width: totalW, height: notch.notchHeight + PillLayout.visualHeightOverhang)
+        .frame(width: totalW, height: notch.notchHeight + PillLayout.visualHeightOverhang + claudeHintExpansionHeight, alignment: .top)
         .frame(width: visualW, alignment: .center)
         .background(
             pillShape
@@ -229,6 +246,7 @@ struct IslandView: View {
         )
         .clipShape(pillShape)
         .offset(y: -PillLayout.visualHeightOverhang / 2)
+        .animation(.easeInOut(duration: 0.22), value: claudeHintExpansionHeight)
     }
 
     private func batteryCompactContent() -> some View {
@@ -251,8 +269,8 @@ struct IslandView: View {
     }
 
     @ViewBuilder
-    private var claudePillCoreHint: some View {
-        if let text = claudePillStatusText, !text.isEmpty {
+    private var claudePillBottomHint: some View {
+        if shouldShowClaudeBottomHint, let text = claudePillStatusText, !text.isEmpty {
             let isWarning = claudePillStatusTone == "warn"
             let isError = claudePillStatusTone == "error"
             let isSuccess = claudePillStatusTone == "success"
@@ -280,8 +298,8 @@ struct IslandView: View {
                     .truncationMode(.tail)
                     .foregroundStyle(tint)
             }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } else {
             EmptyView()
         }

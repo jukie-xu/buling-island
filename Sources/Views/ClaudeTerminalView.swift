@@ -102,19 +102,30 @@ struct ClaudeTerminalView: NSViewRepresentable {
             var env = ProcessInfo.processInfo.environment
             env["TERM"] = env["TERM"] ?? "xterm-256color"
             env["COLORTERM"] = env["COLORTERM"] ?? "truecolor"
+            env["CLICOLOR"] = "1"
+            env["CLICOLOR_FORCE"] = "1"
+            env.removeValue(forKey: "NO_COLOR")
 
             do {
+                terminalView.applyClaudeCodePalette()
                 try terminalView.startClaude(
                     executable: cliPath,
                     environment: env,
                     workingDirectory: workingDirectory.path
                 )
+                // SwiftTerm/CLI 在切到 alt-screen 后可能覆盖初始渲染状态，延迟再刷一轮主题确保生效。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    terminalView.applyClaudeCodePalette()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    terminalView.applyClaudeCodePalette()
+                }
                 lastLaunchKey = "\(cliPath)|\(workingDirectory.path)"
                 recentlySeenPlainText = ""
                 Task { @MainActor in
                     self.parent.lastError = nil
                     self.parent.interactionHint = nil
-                    self.parent.latestStatusText = "Claude 已启动"
+                    self.parent.latestStatusText = nil
                     self.parent.latestStatusTone = "info"
                     self.parent.isRunning = true
                 }
@@ -286,7 +297,7 @@ struct ClaudeTerminalView: NSViewRepresentable {
         func processTerminated(source: TerminalView, exitCode: Int32?) {
             Task { @MainActor in
                 self.parent.isRunning = false
-                self.parent.latestStatusText = "Claude 已退出"
+                self.parent.latestStatusText = nil
                 self.parent.latestStatusTone = "info"
                 if let code = exitCode, code != 0 {
                     self.parent.lastError = "Claude TUI 已退出（代码 \(code)）"
