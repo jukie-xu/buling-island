@@ -138,27 +138,27 @@ struct SettingsView: View {
     }
 
     private func sidebarRow(_ section: SettingsSidebarSection) -> some View {
-        Button {
+        let isSelected = selectedSection == section
+        return Button {
             withAnimation(.easeInOut(duration: 0.15)) {
                 selectedSection = section
             }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: section.icon)
-                    .font(.system(size: 14))
-                    .frame(width: 22)
+                sidebarIcon(for: section, selected: isSelected)
+                    .frame(width: 22, height: 22)
                 Text(section.rawValue)
                     .font(.system(size: 13, weight: .medium))
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .foregroundStyle(selectedSection == section ? Color.accentColor : .primary)
+            .foregroundStyle(isSelected ? Color.accentColor : .primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selectedSection == section ? Color.accentColor.opacity(0.12) : Color.clear)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
             )
         }
         .buttonStyle(.plain)
@@ -178,9 +178,8 @@ struct SettingsView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "appstore")
-                        .font(.system(size: 14))
-                        .frame(width: 22)
+                    AppPanelIconMark(size: 16, active: true)
+                        .frame(width: 22, height: 22)
                     Text("应用面板")
                         .font(.system(size: 13, weight: .medium))
                     Spacer(minLength: 0)
@@ -215,33 +214,46 @@ struct SettingsView: View {
     }
 
     private func appPanelChildRow(_ section: SettingsSidebarSection) -> some View {
-        Button {
+        let isSelected = selectedSection == section
+        return Button {
             withAnimation(.easeInOut(duration: 0.15)) {
                 selectedSection = section
             }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: section.icon)
-                    .font(.system(size: 13))
-                    .frame(width: 20)
+                sidebarIcon(for: section, selected: isSelected)
+                    .frame(width: 20, height: 20)
                 Text(section.rawValue)
                     .font(.system(size: 12.5, weight: .medium))
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .foregroundStyle(selectedSection == section ? Color.accentColor : .primary.opacity(0.92))
+            .foregroundStyle(isSelected ? Color.accentColor : .primary.opacity(0.92))
             .padding(.leading, 22)
             .padding(.trailing, 12)
             .padding(.vertical, 9)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(selectedSection == section ? Color.accentColor.opacity(0.12) : Color.clear)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
             )
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func sidebarIcon(for section: SettingsSidebarSection, selected: Bool) -> some View {
+        switch section {
+        case .claude:
+            ClaudePanelIconMark(size: 15, active: selected)
+        case .tasks:
+            TaskPanelIconMark(size: 15, active: selected)
+        default:
+            Image(systemName: section.icon)
+                .font(.system(size: 14))
+        }
     }
 }
 

@@ -57,7 +57,7 @@ struct IslandView: View {
             let progress: CGFloat = viewModel.state == .expanded ? 1 : 0
             let totalW = PillLayout.totalWidth(notch: notch, left: settings.pillLeftSlot, right: settings.pillRightSlot)
             let pillVisualW = totalW + 2 * PillLayout.visualWidthOverhang
-            let pillH = notch.notchHeight + claudeHintExpansionHeight
+            let pillH = notch.notchHeight + 1 + claudeHintExpansionHeight
 
             // Expanded content occupies the full hosting area.
             let expandedSize = geo.size
@@ -679,14 +679,12 @@ struct IslandView: View {
         return Button {
             expandedContentMode = mode
         } label: {
-            Text("A")
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                )
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                AppPanelIconMark(size: 14, active: true)
+            }
+            .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("应用面板")
@@ -711,9 +709,7 @@ struct IslandView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                ClaudeCodeLogoShape()
-                    .fill(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.65))
-                    .padding(4.5)
+                ClaudePanelIconMark(size: 14, active: true)
             }
             .frame(width: 24, height: 24)
         }
@@ -726,14 +722,12 @@ struct IslandView: View {
         return Button {
             expandedContentMode = mode
         } label: {
-            Text("T")
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                )
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                TaskPanelIconMark(size: 14, active: true)
+            }
+            .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Task 面板")
@@ -1393,6 +1387,7 @@ struct IslandView: View {
 
     private enum TaskStatusKind {
         case idle
+        case inactiveNoClaude
         case running
         case success
         case error
@@ -1402,6 +1397,10 @@ struct IslandView: View {
         let lines = normalizedTaskOutputLines(from: session.tailOutput)
         let compact = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = compact.lowercased()
+        let seemsClaudeSession = looksLikeClaudeSession(session)
+        if !seemsClaudeSession {
+            return (Color.gray.opacity(0.85), false, .inactiveNoClaude)
+        }
         if compact.isEmpty {
             return (Color.green.opacity(0.95), false, .idle)
         }
@@ -1429,15 +1428,32 @@ struct IslandView: View {
         return (Color.green.opacity(0.95), false, .idle)
     }
 
+    private func looksLikeClaudeSession(_ session: ITerm2IntegrationService.Session) -> Bool {
+        let titleLower = session.title.lowercased()
+        let tailLower = session.tailOutput.lowercased()
+        let claudeMarkers = [
+            "claude",
+            "claude code",
+            "what should claude do",
+            "billowing",
+            "sonnet",
+            "ask claude",
+            "esc to interrupt"
+        ]
+        if titleLower.contains("claude") {
+            return true
+        }
+        return claudeMarkers.contains(where: { tailLower.contains($0) })
+    }
+
     private func taskSecondaryText(
         for session: ITerm2IntegrationService.Session,
         visual: (color: Color, isRunning: Bool, kind: TaskStatusKind)
     ) -> String {
         if visual.kind == .idle {
-            let titleLower = session.title.lowercased()
-            if titleLower.contains("claude") {
-                return "当前未运行任务"
-            }
+            return "当前未运行任务"
+        }
+        if visual.kind == .inactiveNoClaude {
             return "当前会话未启动 claude"
         }
         if visual.kind == .error {
@@ -1454,6 +1470,8 @@ struct IslandView: View {
             switch visual.kind {
             case .idle:
                 return Color.green.opacity(0.14)
+            case .inactiveNoClaude:
+                return Color.gray.opacity(0.14)
             case .running:
                 return Color.green.opacity(0.16)
             case .success:
@@ -1474,6 +1492,8 @@ struct IslandView: View {
             switch visual.kind {
             case .idle:
                 return Color.green.opacity(0.30)
+            case .inactiveNoClaude:
+                return Color.gray.opacity(0.28)
             case .running:
                 return Color.green.opacity(0.34)
             case .success:
