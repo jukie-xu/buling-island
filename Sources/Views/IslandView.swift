@@ -23,6 +23,7 @@ struct IslandView: View {
     @State private var claudeRelaunchWorkItem: DispatchWorkItem?
     @State private var claudePendingAutoStart = false
     @State private var taskBreathPhase = false
+    @State private var taskWavePhase = false
     @State private var pillSuppressedIssueUntil: [String: Date] = [:]
 
     private enum ExpandedContentMode {
@@ -104,6 +105,11 @@ struct IslandView: View {
             if !taskBreathPhase {
                 withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
                     taskBreathPhase = true
+                }
+            }
+            if !taskWavePhase {
+                withAnimation(.easeInOut(duration: 5.2).repeatForever(autoreverses: true)) {
+                    taskWavePhase = true
                 }
             }
         }
@@ -1078,6 +1084,11 @@ struct IslandView: View {
                                 .background(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                                         .fill(taskRowBackgroundColor(visual: visual, isMuted: isMuted))
+                                        .overlay {
+                                            if visual.isRunning {
+                                                taskRunningWaveOverlay(isMuted: isMuted)
+                                            }
+                                        }
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                                 .strokeBorder(taskRowBorderColor(visual: visual, isMuted: isMuted), lineWidth: 1)
@@ -1650,6 +1661,30 @@ struct IslandView: View {
     private func truncateLine(_ text: String, max: Int) -> String {
         if text.count <= max { return text }
         return String(text.prefix(max)) + "…"
+    }
+
+    @ViewBuilder
+    private func taskRunningWaveOverlay(isMuted: Bool) -> some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.00),
+                            Color.white.opacity(isMuted ? 0.03 : 0.06),
+                            Color.white.opacity(0.00)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(width: width * 0.68)
+                .offset(x: taskWavePhase ? width * 0.24 : -width * 0.24)
+                .blur(radius: 7)
+        }
+        .allowsHitTesting(false)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func stopClaudeRightSlotFlash() {

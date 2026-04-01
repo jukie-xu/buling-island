@@ -6,8 +6,8 @@ import ServiceManagement
 
 private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
     case dashboard = "控制台"
-    case claude = "Claude"
-    case tasks = "任务"
+    case claude = "Claude 面板"
+    case tasks = "任务面板"
     case layout = "布局"
     case appearance = "外观"
     case animation = "动画"
@@ -32,6 +32,7 @@ struct SettingsView: View {
 
     @ObservedObject var settings = SettingsManager.shared
     @State private var selectedSection: SettingsSidebarSection = .dashboard
+    @State private var appPanelExpanded = true
     @Environment(\.colorScheme) private var colorScheme
     @State private var showQuitConfirm = false
 
@@ -94,9 +95,10 @@ struct SettingsView: View {
             .padding(.bottom, 20)
 
             VStack(spacing: 4) {
-                ForEach(SettingsSidebarSection.allCases) { section in
-                    sidebarRow(section)
-                }
+                sidebarRow(.dashboard)
+                sidebarRow(.claude)
+                sidebarRow(.tasks)
+                appPanelGroup
             }
             .padding(.horizontal, 10)
 
@@ -156,6 +158,83 @@ struct SettingsView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selectedSection == section ? Color.accentColor.opacity(0.12) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var appPanelChildren: [SettingsSidebarSection] {
+        [.layout, .appearance, .animation]
+    }
+
+    private var appPanelGroup: some View {
+        VStack(spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    appPanelExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "rectangle.3.group")
+                        .font(.system(size: 14))
+                        .frame(width: 22)
+                    Text("应用面板")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer(minLength: 0)
+                    Image(systemName: appPanelExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.clear)
+                )
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+
+            if appPanelExpanded {
+                VStack(spacing: 3) {
+                    ForEach(appPanelChildren) { section in
+                        appPanelChildRow(section)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func appPanelChildRow(_ section: SettingsSidebarSection) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                selectedSection = section
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: section.icon)
+                    .font(.system(size: 13))
+                    .frame(width: 20)
+                Text(section.rawValue)
+                    .font(.system(size: 12.5, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .foregroundStyle(selectedSection == section ? Color.accentColor : .primary.opacity(0.92))
+            .padding(.leading, 22)
+            .padding(.trailing, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(selectedSection == section ? Color.accentColor.opacity(0.12) : Color.clear)
             )
         }
