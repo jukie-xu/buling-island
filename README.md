@@ -47,7 +47,7 @@ Buling Island turns your MacBook's notch area into a quick app launcher. Click t
 
 ### 安装包（当前版本） / Installer (Current)
 
-- `dist/BulingIsland_v1.0.0.dmg`
+- `BulingIsland_v1.0.0.dmg`
 - 安装方式：双击打开 DMG，拖拽 `BulingIsland.app` 到 `Applications`
 
 ### 从 DMG 安装 / Install from DMG
