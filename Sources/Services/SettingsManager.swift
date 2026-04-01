@@ -25,6 +25,12 @@ final class SettingsManager: ObservableObject {
     private let pillVisualWidthOverhangKey = "pillVisualWidthOverhang"
     private let pillVisualHeightOverhangKey = "pillVisualHeightOverhang"
     private let pillSideSlotWidthKey = "pillSideSlotWidth"
+    private let claudeStretchHintEnabledKey = "claudeStretchHintEnabled"
+    private let claudeHintAutoCollapseEnabledKey = "claudeHintAutoCollapseEnabled"
+    private let claudeHintAutoCollapseDelayKey = "claudeHintAutoCollapseDelay"
+    private let claudeEnableITerm2CaptureKey = "claudeEnableITerm2Capture"
+    private let claudeITerm2PollIntervalKey = "claudeITerm2PollInterval"
+    private let taskPanelFontSizeKey = "taskPanelFontSize"
 
     @Published var expandAnimation: ExpandAnimation {
         didSet { UserDefaults.standard.set(expandAnimation.rawValue, forKey: expandKey) }
@@ -103,6 +109,36 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(Double(pillSideSlotWidth), forKey: pillSideSlotWidthKey) }
     }
 
+    /// Claude 状态提醒是否触发 pill 底部下拉展示。
+    @Published var claudeStretchHintEnabled: Bool {
+        didSet { UserDefaults.standard.set(claudeStretchHintEnabled, forKey: claudeStretchHintEnabledKey) }
+    }
+
+    /// Claude 状态提醒展示后是否自动缩回。
+    @Published var claudeHintAutoCollapseEnabled: Bool {
+        didSet { UserDefaults.standard.set(claudeHintAutoCollapseEnabled, forKey: claudeHintAutoCollapseEnabledKey) }
+    }
+
+    /// Claude 提醒自动缩回延迟（秒）。
+    @Published var claudeHintAutoCollapseDelay: Double {
+        didSet { UserDefaults.standard.set(claudeHintAutoCollapseDelay, forKey: claudeHintAutoCollapseDelayKey) }
+    }
+
+    /// 是否启用 iTerm2 外部会话输出捕获（实验特性）。
+    @Published var claudeEnableITerm2Capture: Bool {
+        didSet { UserDefaults.standard.set(claudeEnableITerm2Capture, forKey: claudeEnableITerm2CaptureKey) }
+    }
+
+    /// iTerm2 捕获轮询间隔（秒）。
+    @Published var claudeITerm2PollInterval: Double {
+        didSet { UserDefaults.standard.set(claudeITerm2PollInterval, forKey: claudeITerm2PollIntervalKey) }
+    }
+
+    /// Task 面板内容字号基准。
+    @Published var taskPanelFontSize: Double {
+        didSet { UserDefaults.standard.set(taskPanelFontSize, forKey: taskPanelFontSizeKey) }
+    }
+
     private init() {
         let expandRaw = UserDefaults.standard.string(forKey: expandKey) ?? ""
         self.expandAnimation = ExpandAnimation(rawValue: expandRaw) ?? .spring
@@ -136,6 +172,17 @@ final class SettingsManager: ObservableObject {
 
         let slotW = UserDefaults.standard.object(forKey: pillSideSlotWidthKey) as? Double
         self.pillSideSlotWidth = CGFloat(slotW ?? 52)
+
+        self.claudeStretchHintEnabled = UserDefaults.standard.object(forKey: claudeStretchHintEnabledKey) as? Bool ?? true
+        self.claudeHintAutoCollapseEnabled = UserDefaults.standard.object(forKey: claudeHintAutoCollapseEnabledKey) as? Bool ?? true
+        let collapseDelay = UserDefaults.standard.object(forKey: claudeHintAutoCollapseDelayKey) as? Double
+        self.claudeHintAutoCollapseDelay = max(1, min(10, collapseDelay ?? 3))
+
+        self.claudeEnableITerm2Capture = UserDefaults.standard.object(forKey: claudeEnableITerm2CaptureKey) as? Bool ?? false
+        let pollInterval = UserDefaults.standard.object(forKey: claudeITerm2PollIntervalKey) as? Double
+        self.claudeITerm2PollInterval = max(1, min(5, pollInterval ?? 1.5))
+        let taskFontSize = UserDefaults.standard.object(forKey: taskPanelFontSizeKey) as? Double
+        self.taskPanelFontSize = max(10, min(16, taskFontSize ?? 12))
     }
 
     private func savePillColor() {

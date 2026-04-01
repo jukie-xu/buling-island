@@ -6,6 +6,8 @@ import ServiceManagement
 
 private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
     case dashboard = "控制台"
+    case claude = "Claude"
+    case tasks = "任务"
     case layout = "布局"
     case appearance = "外观"
     case animation = "动画"
@@ -15,6 +17,8 @@ private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .dashboard: return "rectangle.inset.filled.and.person.filled"
+        case .claude: return "terminal"
+        case .tasks: return "list.bullet.rectangle"
         case .layout: return "square.grid.2x2"
         case .appearance: return "paintbrush"
         case .animation: return "sparkles.rectangle.stack"
@@ -43,6 +47,10 @@ struct SettingsView: View {
                 switch selectedSection {
                 case .dashboard:
                     SettingsDashboardTab(settings: settings, colorScheme: colorScheme)
+                case .claude:
+                    ClaudeSettingsTab(settings: settings, colorScheme: colorScheme)
+                case .tasks:
+                    TaskSettingsTab(settings: settings, colorScheme: colorScheme)
                 case .animation:
                     AnimationSettingsTab(settings: settings, colorScheme: colorScheme)
                 case .layout:
@@ -154,6 +162,184 @@ struct SettingsView: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+}
+
+struct ClaudeSettingsTab: View {
+    @ObservedObject var settings: SettingsManager
+    let colorScheme: ColorScheme
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                claudeHintCard
+            }
+            .padding(20)
+        }
+    }
+
+    private var claudeHintCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Text("Claude 提醒文案")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            toggleRow(
+                title: "展示下拉伸提醒文案",
+                caption: "在收缩态 pill 底部显示 Claude 的成功/警告/错误提醒。",
+                isOn: $settings.claudeStretchHintEnabled
+            )
+
+            toggleRow(
+                title: "自动动态缩回",
+                caption: "提醒显示后按设定时长自动收起，减少常驻占位。",
+                isOn: $settings.claudeHintAutoCollapseEnabled
+            )
+
+            toggleRow(
+                title: "启用 iTerm2 会话捕获（实验）",
+                caption: "读取 iTerm2 中运行中的 Claude 会话输出并生成提醒。",
+                isOn: $settings.claudeEnableITerm2Capture
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("自动缩回延迟")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text("\(Int(settings.claudeHintAutoCollapseDelay.rounded()))s")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { settings.claudeHintAutoCollapseDelay },
+                        set: { settings.claudeHintAutoCollapseDelay = min(max($0, 1), 10) }
+                    ),
+                    in: 1...10,
+                    step: 1
+                )
+                .disabled(!settings.claudeHintAutoCollapseEnabled)
+                Text("默认 3 秒；关闭自动缩回后此项不会生效。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("iTerm2 轮询间隔")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text(String(format: "%.1fs", settings.claudeITerm2PollInterval))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { settings.claudeITerm2PollInterval },
+                        set: { settings.claudeITerm2PollInterval = min(max($0, 1), 5) }
+                    ),
+                    in: 1...5,
+                    step: 0.5
+                )
+                .disabled(!settings.claudeEnableITerm2Capture)
+                Text("建议 1.5 秒；较高频率会增加系统开销。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func toggleRow(title: String, caption: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct TaskSettingsTab: View {
+    @ObservedObject var settings: SettingsManager
+    let colorScheme: ColorScheme
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                taskTypographyCard
+            }
+            .padding(20)
+        }
+    }
+
+    private var taskTypographyCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "textformat.size")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Text("Task 字体")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("任务面板字体大小")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text("\(Int(settings.taskPanelFontSize.rounded()))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { settings.taskPanelFontSize },
+                        set: { settings.taskPanelFontSize = min(max($0, 10), 16) }
+                    ),
+                    in: 10...16,
+                    step: 1
+                )
+                Text("默认 12，调小后 Task 卡片文本会更紧凑。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
 }
 

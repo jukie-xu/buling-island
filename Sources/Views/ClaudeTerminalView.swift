@@ -10,6 +10,8 @@ struct ClaudeTerminalView: NSViewRepresentable {
     @Binding var interactionHint: String?
     @Binding var latestStatusText: String?
     @Binding var latestStatusTone: String
+    @Binding var latestStatusRevision: Int
+    @Binding var currentSessionNonce: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -67,9 +69,16 @@ struct ClaudeTerminalView: NSViewRepresentable {
         private var stickyCriticalUntil: Date = .distantPast
         private var stickyCriticalText: String?
         private var stickyCriticalTone: String = "info"
+        private let bornSessionNonce: Int
+        private var ignoreNextTerminationEvent = false
 
         init(parent: ClaudeTerminalView) {
             self.parent = parent
+            self.bornSessionNonce = parent.currentSessionNonce
+        }
+
+        private var isStaleSession: Bool {
+            parent.currentSessionNonce != bornSessionNonce
         }
 
         func attach(view: ClaudeLocalTerminalView) {
@@ -81,13 +90,13 @@ struct ClaudeTerminalView: NSViewRepresentable {
             let launchKey = "\(cliPath)|\(workingDirectory.path)"
 
             if !desiredRunning {
-                terminateIfRunning()
+                terminateIfRunning(updateRunningBinding: true)
                 return
             }
 
             // Start only when needed; restart if executable/dir changed.
             if lastLaunchKey != launchKey {
-                terminateIfRunning()
+                terminateIfRunning(updateRunningBinding: false)
                 doStart(cliPath: cliPath, workingDirectory: workingDirectory, terminalView: terminalView)
                 return
             }
@@ -123,10 +132,12 @@ struct ClaudeTerminalView: NSViewRepresentable {
                 lastLaunchKey = "\(cliPath)|\(workingDirectory.path)"
                 recentlySeenPlainText = ""
                 Task { @MainActor in
+                    guard !self.isStaleSession else { return }
                     self.parent.lastError = nil
                     self.parent.interactionHint = nil
                     self.parent.latestStatusText = nil
                     self.parent.latestStatusTone = "info"
+                    self.parent.latestStatusRevision &+= 1
                     self.parent.isRunning = true
                 }
                 DispatchQueue.main.async {
@@ -135,24 +146,34 @@ struct ClaudeTerminalView: NSViewRepresentable {
                 }
             } catch {
                 Task { @MainActor in
+                    guard !self.isStaleSession else { return }
                     self.parent.lastError = "启动 Claude TUI 失败：\(error.localizedDescription)"
                     self.parent.latestStatusText = "Claude 启动失败"
                     self.parent.latestStatusTone = "error"
+                    self.parent.latestStatusRevision &+= 1
                     self.parent.isRunning = false
                 }
             }
         }
 
-        private func terminateIfRunning() {
+        private func terminateIfRunning(updateRunningBinding: Bool) {
             guard let terminalView else { return }
+            let hadLiveSession = terminalView.isProcessRunning || lastLaunchKey != nil || parent.isRunning
             if terminalView.isProcessRunning {
+                if !updateRunningBinding {
+                    ignoreNextTerminationEvent = true
+                }
                 terminalView.terminate()
             }
+            lastLaunchKey = nil
+            guard updateRunningBinding, hadLiveSession else { return }
             Task { @MainActor in
+                guard !self.isStaleSession else { return }
                 self.parent.isRunning = false
                 self.parent.interactionHint = nil
                 self.parent.latestStatusText = nil
                 self.parent.latestStatusTone = "info"
+                    self.parent.latestStatusRevision &+= 1
             }
         }
 
@@ -166,6 +187,7 @@ struct ClaudeTerminalView: NSViewRepresentable {
             if let line = latestMeaningfulLine(in: recentlySeenPlainText) {
                 let analysis = analyzeStatus(from: line, allText: recentlySeenPlainText)
                 Task { @MainActor in
+                    guard !self.isStaleSession else { return }
                     if Date() < self.stickyCriticalUntil,
                        let sticky = self.stickyCriticalText,
                        self.stickyCriticalTone == "error" {
@@ -175,6 +197,7 @@ struct ClaudeTerminalView: NSViewRepresentable {
                         self.parent.latestStatusText = analysis.text
                         self.parent.latestStatusTone = analysis.tone
                     }
+                    self.parent.latestStatusRevision &+= 1
                 }
             }
             let lower = recentlySeenPlainText.lowercased()
@@ -185,10 +208,13 @@ struct ClaudeTerminalView: NSViewRepresentable {
             ]
             if markers.contains(where: { lower.contains($0) }) {
                 Task { @MainActor in
+                    guard !self.isStaleSession else { return }
                     self.parent.interactionHint = "检测到 Claude 可能在等待确认/选择，请直接在终端中输入。"
+                    self.parent.latestStatusRevision &+= 1
                 }
             } else {
                 Task { @MainActor in
+                    guard !self.isStaleSession else { return }
                     self.parent.interactionHint = nil
                 }
             }
@@ -296,13 +322,20 @@ struct ClaudeTerminalView: NSViewRepresentable {
 
         func processTerminated(source: TerminalView, exitCode: Int32?) {
             Task { @MainActor in
+                guard !self.isStaleSession else { return }
+                if self.ignoreNextTerminationEvent {
+                    self.ignoreNextTerminationEvent = false
+                    return
+                }
                 self.parent.isRunning = false
                 self.parent.latestStatusText = nil
                 self.parent.latestStatusTone = "info"
+                self.parent.latestStatusRevision &+= 1
                 if let code = exitCode, code != 0 {
                     self.parent.lastError = "Claude TUI 已退出（代码 \(code)）"
                     self.parent.latestStatusText = "Claude 异常退出（\(code)）"
                     self.parent.latestStatusTone = "error"
+                    self.parent.latestStatusRevision &+= 1
                 }
             }
         }
@@ -370,7 +403,11 @@ final class ClaudeLocalTerminalView: LocalProcessTerminalView {
     }
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
-        if let chunk = String(bytes: slice, encoding: .utf8), !chunk.isEmpty {
+        // Terminal output may arrive in arbitrary byte slices. Using `String(bytes:, .utf8)`
+        // can drop an entire chunk when a multi-byte sequence is split across reads.
+        // Decode lossily here to keep the capture pipeline continuously fed.
+        let chunk = String(decoding: slice, as: UTF8.self)
+        if !chunk.isEmpty {
             onPlainText?(stripANSI(from: chunk))
         }
         super.dataReceived(slice: slice)

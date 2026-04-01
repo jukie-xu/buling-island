@@ -7,6 +7,7 @@ struct IslandView: View {
     @ObservedObject private var settings = SettingsManager.shared
     @StateObject private var pillHud = PillHudViewModel()
     @StateObject private var claudeCLI = ClaudeCLIService()
+    @StateObject private var iTerm2Integration = ITerm2IntegrationService()
     @State private var isLaunchpadEditing = false
     @State private var expandedContentMode: ExpandedContentMode = .appStore
     @State private var claudeInteractionHint: String?
@@ -15,10 +16,19 @@ struct IslandView: View {
     @State private var claudeRightSlotFlashVisible = false
     @State private var claudeRightSlotFlashPulse = false
     @State private var lastClaudeFlashAt: Date = .distantPast
+    @State private var claudeSessionRenderNonce: Int = 0
+    @State private var claudeStatusRevision: Int = 0
+    @State private var claudeBottomHintCollapsed = false
+    @State private var claudeBottomHintAutoCollapseWorkItem: DispatchWorkItem?
+    @State private var claudeRelaunchWorkItem: DispatchWorkItem?
+    @State private var claudePendingAutoStart = false
+    @State private var taskBreathPhase = false
+    @State private var pillSuppressedIssueUntil: [String: Date] = [:]
 
     private enum ExpandedContentMode {
         case appStore
         case claude
+        case tasks
     }
 
     private var fillColor: Color {
@@ -46,8 +56,7 @@ struct IslandView: View {
             let progress: CGFloat = viewModel.state == .expanded ? 1 : 0
             let totalW = PillLayout.totalWidth(notch: notch, left: settings.pillLeftSlot, right: settings.pillRightSlot)
             let pillVisualW = totalW + 2 * PillLayout.visualWidthOverhang
-            let effectiveVisualHeightOverhang = max(PillLayout.visualHeightOverhang, 2)
-            let pillH = notch.notchHeight + effectiveVisualHeightOverhang + claudeHintExpansionHeight
+            let pillH = notch.notchHeight + claudeHintExpansionHeight
 
             // Expanded content occupies the full hosting area.
             let expandedSize = geo.size
@@ -90,6 +99,13 @@ struct IslandView: View {
                 pillHud.start()
                 syncCollapsedPillHitRect()
             }
+            refreshClaudeBottomHintAutoCollapse()
+            syncITerm2CaptureConfig()
+            if !taskBreathPhase {
+                withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
+                    taskBreathPhase = true
+                }
+            }
         }
         .onChange(of: viewModel.state) { newState in
             if newState == .collapsed {
@@ -98,7 +114,9 @@ struct IslandView: View {
             } else {
                 pillHud.stop()
                 stopClaudeRightSlotFlash()
+                clearPillAlertsAfterOpen()
             }
+            syncITerm2CaptureConfig()
         }
         .onChange(of: settings.pillLeftSlot) { _ in syncCollapsedPillHitRect() }
         .onChange(of: settings.pillRightSlot) { _ in syncCollapsedPillHitRect() }
@@ -117,6 +135,104 @@ struct IslandView: View {
         .onChange(of: claudePillStatusTone) { tone in
             if tone == "warn" || tone == "error" {
                 triggerClaudeRightSlotFlashIfNeeded()
+            }
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: claudePillStatusText) { _ in
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: claudeStatusRevision) { _ in
+            if claudeInteractionHint != nil || claudePillStatusTone == "warn" || claudePillStatusTone == "error" {
+                triggerClaudeRightSlotFlashIfNeeded()
+            }
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: claudeCLI.lastError) { err in
+            guard let err, !err.isEmpty else { return }
+            if isPillIssueSuppressed(text: err, tone: "error") {
+                return
+            }
+            claudePillStatusText = "错误: \(err)"
+            claudePillStatusTone = "error"
+            claudeStatusRevision &+= 1
+            triggerClaudeRightSlotFlashIfNeeded()
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: settings.claudeStretchHintEnabled) { enabled in
+            if !enabled {
+                claudeBottomHintCollapsed = true
+                claudeBottomHintAutoCollapseWorkItem?.cancel()
+                claudeBottomHintAutoCollapseWorkItem = nil
+            } else {
+                claudeBottomHintCollapsed = false
+                refreshClaudeBottomHintAutoCollapse()
+            }
+        }
+        .onChange(of: settings.claudeHintAutoCollapseEnabled) { _ in
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: settings.claudeHintAutoCollapseDelay) { _ in
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: settings.claudeEnableITerm2Capture) { _ in
+            syncITerm2CaptureConfig()
+        }
+        .onChange(of: settings.claudeITerm2PollInterval) { _ in
+            syncITerm2CaptureConfig()
+        }
+        .onChange(of: expandedContentMode) { mode in
+            if mode == .tasks {
+                syncITerm2CaptureConfig()
+            }
+        }
+        .onChange(of: iTerm2Integration.statusRevision) { _ in
+            if let text = iTerm2Integration.latestStatusText, !text.isEmpty {
+                let tone = iTerm2Integration.latestStatusTone
+                if tone == "warn" || tone == "error" || tone == "success" {
+                    if let tail = iTerm2Integration.latestStatusSourceTail, !tail.isEmpty {
+                        if tone == "error" {
+                            let extracted = lastErrorText(from: tail)
+                            if isPillIssueSuppressed(text: extracted, tone: tone) {
+                                return
+                            }
+                            claudePillStatusText = extracted
+                        } else {
+                            let extracted = lastQuestionText(from: tail)
+                            if isPillIssueSuppressed(text: extracted, tone: tone) {
+                                return
+                            }
+                            claudePillStatusText = extracted
+                        }
+                    } else {
+                        if isPillIssueSuppressed(text: text, tone: tone) {
+                            return
+                        }
+                        claudePillStatusText = text
+                    }
+                    claudePillStatusTone = tone
+                    claudeStatusRevision &+= 1
+                    if tone == "warn" || tone == "error" {
+                        triggerClaudeRightSlotFlashIfNeeded()
+                    }
+                }
+            }
+            if let hint = iTerm2Integration.interactionHint, !hint.isEmpty {
+                claudeInteractionHint = hint
+            }
+            if let err = iTerm2Integration.lastError, !err.isEmpty {
+                claudePillStatusText = err
+                claudePillStatusTone = "error"
+                claudeStatusRevision &+= 1
+                triggerClaudeRightSlotFlashIfNeeded()
+            }
+            refreshClaudeBottomHintAutoCollapse()
+        }
+        .onChange(of: claudeCLI.installStatus) { status in
+            guard claudePendingAutoStart else { return }
+            guard claudeCLI.projectDirectory != nil else { return }
+            if case .installed = status {
+                claudePendingAutoStart = false
+                startClaudeSession()
             }
         }
     }
@@ -151,11 +267,9 @@ struct IslandView: View {
     /// 收缩 pill 为纯黑底，前景固定浅色以保证对比度（与系统浅色/深色模式无关）。
     private var collapsedPillForeground: Color { .white }
     private var shouldShowClaudeBottomHint: Bool {
-        guard let text = claudePillStatusText, !text.isEmpty else { return false }
-        if claudePillStatusTone == "success" || claudePillStatusTone == "error" || claudePillStatusTone == "warn" {
-            return true
-        }
-        return false
+        guard settings.claudeStretchHintEnabled else { return false }
+        if claudeBottomHintCollapsed { return false }
+        return shouldShowClaudeBottomHintRaw
     }
     private var claudeHintExpansionHeight: CGFloat {
         if shouldShowClaudeBottomHint {
@@ -241,14 +355,14 @@ struct IslandView: View {
                     .frame(height: claudeHintExpansionHeight)
             }
         }
-        .frame(width: totalW, height: notch.notchHeight + max(PillLayout.visualHeightOverhang, 2) + claudeHintExpansionHeight, alignment: .top)
+        .frame(width: totalW, height: notch.notchHeight + claudeHintExpansionHeight, alignment: .top)
         .frame(width: visualW, alignment: .center)
         .background(
             pillShape
                 .fill(Color.black)
         )
         .clipShape(pillShape)
-        .offset(y: -max(PillLayout.visualHeightOverhang, 2) / 2)
+        .offset(y: 0)
         .animation(.easeInOut(duration: 0.22), value: claudeHintExpansionHeight)
     }
 
@@ -448,6 +562,10 @@ struct IslandView: View {
         )
     }
 
+    private var taskFontBase: CGFloat {
+        CGFloat(settings.taskPanelFontSize)
+    }
+
     private var expandedView: some View {
         VStack(spacing: 0) {
             // Top bar — flush with screen top, no rounded corners
@@ -455,6 +573,7 @@ struct IslandView: View {
                 HStack(spacing: 6) {
                     appStoreModeButton(mode: .appStore)
                     claudeModeButton(mode: .claude)
+                    taskModeButton(mode: .tasks)
                 }
                 .padding(.leading, 10)
 
@@ -519,6 +638,11 @@ struct IslandView: View {
                 }
             case .claude:
                 claudePanelView
+            case .tasks:
+                claudeTaskBoardSection
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 14)
             }
         }
         // Leave horizontal margins for the top flare geometry; body width stays the same.
@@ -591,13 +715,40 @@ struct IslandView: View {
         .accessibilityLabel("Claude 面板")
     }
 
+    private func taskModeButton(mode: ExpandedContentMode) -> some View {
+        let selected = expandedContentMode == mode
+        return Button {
+            expandedContentMode = mode
+        } label: {
+            Text("T")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Task 面板")
+    }
+
     private var claudePanelView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                claudeCodeLogoMark(size: 16)
-                Text("Claude")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                claudeCodeLogoMark(size: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.95))
+                    Text(claudeCLI.projectDirectory?.path ?? "未选择项目目录")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(claudeCLI.projectDirectory == nil ? 0.45 : 0.68))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                claudeTopRightToolbar
             }
 
             claudeInstallStatusSection
@@ -611,9 +762,9 @@ struct IslandView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.top, 10)
-        .padding(.bottom, 12)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             claudeCLI.ensureDetected()
@@ -621,53 +772,142 @@ struct IslandView: View {
         .onChange(of: claudeCLI.projectDirectory) { dir in
             guard dir != nil else { return }
             if !claudeCLI.isRunning {
-                claudeCLI.isRunning = true
+                startClaudeSession()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var claudeTopRightToolbar: some View {
+        if case .installed = claudeCLI.installStatus, claudeCLI.projectDirectory != nil {
+            HStack(spacing: 8) {
+                Text("Claude 会话")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                    )
+
+                Button {
+                    pickProjectDirectory()
+                } label: {
+                    Text("切换目录")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                        )
+                }
+                .buttonStyle(.plain)
+
+                if claudeCLI.isRunning {
+                    Button {
+                        stopClaudeSession(clearSurface: true)
+                    } label: {
+                        Text("停止")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        resetClaudeSessionAndRelaunch(shouldRelaunch: true)
+                    } label: {
+                        Text("启动")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.92))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    resetClaudeSessionAndRelaunch(shouldRelaunch: true)
+                } label: {
+                    Text("重启")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                        )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
     private var projectSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("项目路径")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
+        VStack(alignment: .leading, spacing: 12) {
+            Text("项目目录")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.86))
 
-            HStack(spacing: 8) {
-                if let dir = claudeCLI.projectDirectory {
-                    Text(dir.path)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text("未选择项目目录")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.5))
-                }
+            VStack(spacing: 14) {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.78))
 
-                Spacer()
+                Text("选择一个目录作为 Claude 的工作区")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.88))
+
+                Text("建议直接选择你的项目根目录，之后会自动启动终端会话。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
 
                 Button {
                     pickProjectDirectory()
                 } label: {
-                    Text("选择目录")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.9))
-                        )
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("选择目录")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.92))
+                    )
                 }
                 .buttonStyle(.plain)
             }
-            .padding(8)
+            .frame(maxWidth: .infinity, minHeight: 210, maxHeight: .infinity, alignment: .center)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
             )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var claudeInstallStatusSection: some View {
@@ -675,14 +915,20 @@ struct IslandView: View {
             switch claudeCLI.installStatus {
             case .unknown, .checking:
                 Text("正在检测本机 Claude CLI…")
-                    .font(.system(size: 12))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.6))
                     .frame(maxWidth: .infinity, alignment: .leading)
 
             case .missing(let reason):
                 Text(reason)
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.red.opacity(0.12))
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
             case .installed:
@@ -692,79 +938,12 @@ struct IslandView: View {
     }
 
     private var claudeSessionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Claude 会话")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                Spacer()
-                Button {
-                    pickProjectDirectory()
-                } label: {
-                    Text("切换目录")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.82))
-                }
-                .buttonStyle(.plain)
-            }
-
+        VStack(alignment: .leading, spacing: 10) {
             if let dir = claudeCLI.projectDirectory,
                case let .installed(path) = claudeCLI.installStatus {
-
-                HStack(spacing: 10) {
-                    if claudeCLI.isRunning {
-                        Button {
-                            claudeCLI.isRunning = false
-                        } label: {
-                            Text("停止")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            claudeCLI.isRunning = true
-                        } label: {
-                            Text("启动")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.white.opacity(0.9))
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    Button {
-                        claudeCLI.isRunning = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            claudeCLI.isRunning = true
-                        }
-                    } label: {
-                        Text("重新启动")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-
-                    Spacer()
+                if settings.claudeEnableITerm2Capture {
+                    iTerm2SessionStrip
                 }
-
                 if let hint = claudeInteractionHint, !hint.isEmpty {
                     Text(hint)
                         .font(.system(size: 11, weight: .semibold))
@@ -777,7 +956,7 @@ struct IslandView: View {
                         )
                 }
 
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.white.opacity(0.04))
                     .overlay {
                         ClaudeTerminalView(
@@ -787,20 +966,239 @@ struct IslandView: View {
                             lastError: $claudeCLI.lastError,
                             interactionHint: $claudeInteractionHint,
                             latestStatusText: $claudePillStatusText,
-                            latestStatusTone: $claudePillStatusTone
+                            latestStatusTone: $claudePillStatusTone,
+                            latestStatusRevision: $claudeStatusRevision,
+                            currentSessionNonce: $claudeSessionRenderNonce
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .id(claudeSessionRenderNonce)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if let error = claudeCLI.lastError {
                     Text(error)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(Color.red.opacity(0.9))
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var claudeTaskBoardSection: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(taskGroups, id: \.name) { group in
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text(group.name)
+                                .font(.system(size: taskFontBase, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.88))
+                            Spacer()
+                            Text("\(group.tasks.count) 个任务")
+                                .font(.system(size: max(9, taskFontBase - 2)))
+                                .foregroundStyle(.white.opacity(0.58))
+                        }
+
+                        if group.tasks.isEmpty {
+                            Text("暂无捕获任务")
+                                .font(.system(size: max(10, taskFontBase - 1)))
+                                .foregroundStyle(.white.opacity(0.42))
+                                .padding(.vertical, 6)
+                        } else {
+                            ForEach(group.tasks, id: \.id) { task in
+                                let visual = taskVisualMeta(for: task)
+                                let isMuted = iTerm2Integration.isSessionMuted(task.id)
+                                VStack(alignment: .leading, spacing: 7) {
+                                    HStack(alignment: .center, spacing: 8) {
+                                        Circle()
+                                            .fill(visual.color)
+                                            .frame(width: 9, height: 9)
+                                            .shadow(color: visual.color.opacity(0.55), radius: visual.isRunning ? 4 : 1, x: 0, y: 0)
+                                            .opacity(taskBreathPhase ? 1 : 0.7)
+                                            .scaleEffect(taskBreathPhase ? 1 : 0.84)
+
+                                        if isMuted {
+                                            Image(systemName: "speaker.slash.fill")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(.white.opacity(0.45))
+                                        }
+
+                                        Text(task.title.isEmpty ? "Claude 任务" : task.title)
+                                            .font(.system(size: taskFontBase, weight: .semibold))
+                                            .foregroundStyle(.white.opacity(isMuted ? 0.82 : 0.93))
+                                            .lineLimit(1)
+
+                                        Spacer(minLength: 6)
+
+                                        HStack(spacing: 6) {
+                                            Toggle(
+                                                "Mute",
+                                                isOn: Binding(
+                                                    get: { isMuted },
+                                                    set: { iTerm2Integration.setSessionMuted($0, sessionID: task.id) }
+                                                )
+                                            )
+                                            .toggleStyle(.switch)
+                                            .controlSize(.mini)
+                                            .tint(isMuted ? Color(red: 0.33, green: 0.46, blue: 0.62) : Color(white: 0.22))
+                                            .labelsHidden()
+                                            .help("静音该会话：不再在 pill 提醒")
+
+                                            Text("Mute")
+                                                .font(.system(size: max(8, taskFontBase - 3), weight: .semibold))
+                                            .foregroundStyle(.white.opacity(isMuted ? 0.94 : 0.55))
+                                        }
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            Capsule(style: .continuous)
+                                                .fill(isMuted ? Color(red: 0.20, green: 0.26, blue: 0.33).opacity(0.9) : Color.white.opacity(0.07))
+                                        )
+                                    }
+
+                                    Text(taskSecondaryText(for: task, visual: visual))
+                                        .font(.system(size: taskFontBase, weight: .medium))
+                                        .foregroundStyle(.white.opacity(isMuted ? 0.68 : (visual.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
+                                        .lineLimit(2)
+                                        .truncationMode(.tail)
+
+                                    HStack(spacing: 6) {
+                                        Text(task.terminalApp)
+                                        Text("·")
+                                        Text(task.tty.isEmpty ? "tty 未知" : task.tty)
+                                    }
+                                    .font(.system(size: max(9, taskFontBase - 2), weight: .medium))
+                                    .foregroundStyle(.white.opacity(isMuted ? 0.45 : 0.52))
+                                    .lineLimit(1)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(taskRowBackgroundColor(visual: visual, isMuted: isMuted))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .strokeBorder(taskRowBorderColor(visual: visual, isMuted: isMuted), lineWidth: 1)
+                                        )
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .onTapGesture {
+                                    jumpToExternalTask(session: task)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.04))
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("监控动作")
+                            .font(.system(size: taskFontBase, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.88))
+                        Spacer()
+                        Text(iTerm2Integration.monitorHeartbeatText ?? "未启动")
+                            .font(.system(size: max(9, taskFontBase - 2)))
+                            .foregroundStyle(.white.opacity(0.56))
+                            .lineLimit(1)
+                    }
+                    if iTerm2Integration.monitorActions.isEmpty {
+                        Text("暂无动作日志")
+                            .font(.system(size: max(10, taskFontBase - 1)))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .padding(.vertical, 6)
+                    } else {
+                        ForEach(Array(iTerm2Integration.monitorActions.suffix(8).enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: max(9, taskFontBase - 2)))
+                                .foregroundStyle(.white.opacity(0.62))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.04))
+                )
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private var taskGroups: [(name: String, tasks: [ITerm2IntegrationService.Session])] {
+        let captured = Dictionary(grouping: iTerm2Integration.sessions) { session in
+            session.terminalApp.isEmpty ? "iTerm2" : session.terminalApp
+        }
+        let orderedNames = ["iTerm2", "iTerm", "Ghostty", "Terminal"]
+        var result: [(name: String, tasks: [ITerm2IntegrationService.Session])] = []
+        for name in orderedNames {
+            result.append((name: name, tasks: captured[name] ?? []))
+        }
+        for (name, tasks) in captured where !orderedNames.contains(name) {
+            result.append((name: name, tasks: tasks))
+        }
+        return result
+    }
+
+    @ViewBuilder
+    private var iTerm2SessionStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("iTerm2 会话")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+                Circle()
+                    .fill(iTerm2Integration.isITerm2Running ? Color.green.opacity(0.9) : Color.white.opacity(0.35))
+                    .frame(width: 6, height: 6)
+                Text(iTerm2Integration.isITerm2Running ? "运行中" : "未运行")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.65))
+                Spacer()
+                Text("\(iTerm2Integration.sessions.count) 个 Claude 会话")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+            )
+
+            if !iTerm2Integration.sessions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(iTerm2Integration.sessions.prefix(5)) { session in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(session.title.isEmpty ? "Claude" : session.title)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.86))
+                                    .lineLimit(1)
+                                Text(session.tty.isEmpty ? "tty 未知" : session.tty)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.white.opacity(0.5))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.05))
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func exitLaunchpadEditMode() {
@@ -814,6 +1212,11 @@ struct IslandView: View {
     private func pickProjectDirectory() {
         // 目录选择期间关闭“点击外部收起”，避免面板被误判收起。
         PanelManager.shared.stopClickOutsideMonitor()
+        claudeRelaunchWorkItem?.cancel()
+        claudeRelaunchWorkItem = nil
+        clearClaudeSessionSurface()
+        claudeSessionRenderNonce &+= 1
+        claudeCLI.isRunning = false
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -826,11 +1229,13 @@ struct IslandView: View {
             panel.beginSheetModal(for: window) { response in
                 if response == .OK, let url = panel.urls.first {
                     claudeCLI.projectDirectory = url
+                    startClaudeSession()
                 }
                 ensureClaudePanelExpanded()
             }
         } else if panel.runModal() == .OK, let url = panel.urls.first {
             claudeCLI.projectDirectory = url
+            startClaudeSession()
             ensureClaudePanelExpanded()
         } else {
             ensureClaudePanelExpanded()
@@ -842,6 +1247,85 @@ struct IslandView: View {
             viewModel.toggle()
         }
         PanelManager.shared.setExpanded()
+    }
+
+    private func clearClaudeSessionSurface() {
+        claudeInteractionHint = nil
+        claudePillStatusText = nil
+        claudePillStatusTone = "info"
+        claudeStatusRevision &+= 1
+        claudeCLI.lastError = nil
+        claudeBottomHintCollapsed = false
+        claudeBottomHintAutoCollapseWorkItem?.cancel()
+        claudeBottomHintAutoCollapseWorkItem = nil
+        stopClaudeRightSlotFlash()
+    }
+
+    private func resetClaudeSessionAndRelaunch(shouldRelaunch: Bool) {
+        stopClaudeSession(clearSurface: true)
+        guard shouldRelaunch else { return }
+        startClaudeSession()
+    }
+
+    private func stopClaudeSession(clearSurface: Bool) {
+        claudeRelaunchWorkItem?.cancel()
+        claudeRelaunchWorkItem = nil
+        claudePendingAutoStart = false
+        claudeCLI.isRunning = false
+        if clearSurface {
+            clearClaudeSessionSurface()
+        }
+        claudeSessionRenderNonce &+= 1
+    }
+
+    private func startClaudeSession() {
+        claudeRelaunchWorkItem?.cancel()
+        claudeRelaunchWorkItem = nil
+
+        // 每次启动都重建终端视图，避免旧会话残留状态污染。
+        claudeSessionRenderNonce &+= 1
+        clearClaudeSessionSurface()
+        guard claudeCLI.projectDirectory != nil else { return }
+        guard case .installed = claudeCLI.installStatus else {
+            claudePendingAutoStart = true
+            claudeCLI.ensureDetected()
+            return
+        }
+        claudePendingAutoStart = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            claudeCLI.isRunning = true
+        }
+    }
+
+    private var shouldShowClaudeBottomHintRaw: Bool {
+        if let err = claudeCLI.lastError, !err.isEmpty { return true }
+        guard let text = claudePillStatusText, !text.isEmpty else { return false }
+        return claudePillStatusTone == "success" || claudePillStatusTone == "error" || claudePillStatusTone == "warn"
+    }
+
+    private func refreshClaudeBottomHintAutoCollapse() {
+        claudeBottomHintAutoCollapseWorkItem?.cancel()
+        claudeBottomHintAutoCollapseWorkItem = nil
+
+        guard settings.claudeStretchHintEnabled else {
+            claudeBottomHintCollapsed = true
+            return
+        }
+
+        guard shouldShowClaudeBottomHintRaw else {
+            claudeBottomHintCollapsed = false
+            return
+        }
+
+        claudeBottomHintCollapsed = false
+
+        guard settings.claudeHintAutoCollapseEnabled else { return }
+        let delay = max(1, settings.claudeHintAutoCollapseDelay)
+        let work = DispatchWorkItem {
+            self.claudeBottomHintCollapsed = true
+        }
+        claudeBottomHintAutoCollapseWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func triggerClaudeRightSlotFlashIfNeeded() {
@@ -857,9 +1341,347 @@ struct IslandView: View {
         }
     }
 
+    private func syncITerm2CaptureConfig() {
+        let shouldEnableCapture = settings.claudeEnableITerm2Capture || expandedContentMode == .tasks
+        let effectivePollInterval: Double = {
+            if viewModel.state == .expanded {
+                // 展开态提升刷新频率，让任务输出更接近实时滚动更新。
+                return min(settings.claudeITerm2PollInterval, 0.6)
+            }
+            return settings.claudeITerm2PollInterval
+        }()
+        iTerm2Integration.updateConfig(
+            enabled: shouldEnableCapture,
+            pollInterval: effectivePollInterval
+        )
+    }
+
+    private func clearPillAlertsAfterOpen() {
+        if let text = claudePillStatusText, !text.isEmpty {
+            suppressPillIssue(text: text, tone: claudePillStatusTone, seconds: 180)
+        }
+        iTerm2Integration.acknowledgeAllCurrentIssues()
+        claudePillStatusText = nil
+        claudePillStatusTone = "info"
+        claudeInteractionHint = nil
+        claudeStatusRevision &+= 1
+        claudeBottomHintCollapsed = false
+        claudeBottomHintAutoCollapseWorkItem?.cancel()
+        claudeBottomHintAutoCollapseWorkItem = nil
+        stopClaudeRightSlotFlash()
+    }
+
+    private func jumpToExternalTask(session: ITerm2IntegrationService.Session) {
+        iTerm2Integration.acknowledgeCurrentIssue(for: session)
+        iTerm2Integration.activate(session: session)
+        if viewModel.state == .expanded {
+            viewModel.toggle()
+        }
+        PanelManager.shared.setCollapsed()
+    }
+
+    private enum TaskStatusKind {
+        case idle
+        case running
+        case success
+        case error
+    }
+
+    private func taskVisualMeta(for session: ITerm2IntegrationService.Session) -> (color: Color, isRunning: Bool, kind: TaskStatusKind) {
+        let lines = normalizedTaskOutputLines(from: session.tailOutput)
+        let compact = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = compact.lowercased()
+        if compact.isEmpty {
+            return (Color.green.opacity(0.95), false, .idle)
+        }
+        if lower.contains("error") || lower.contains("failed") || lower.contains("exception")
+            || lower.contains("auth_error") || lower.contains("unauthorized") || lower.contains("401")
+            || lower.contains("timeout") || lower.contains("timed out")
+            || lower.contains("报错") || lower.contains("失败") || lower.contains("错误") || lower.contains("超时") {
+            return (Color.red.opacity(0.92), false, .error)
+        }
+        if iTerm2Integration.activeSessionIDs.contains(session.id) {
+            return (Color.green.opacity(0.95), true, .running)
+        }
+        if lower.contains("done") || lower.contains("completed") || lower.contains("finished")
+            || lower.contains("success") || lower.contains("已完成") || lower.contains("成功") || lower.contains("完成") {
+            return (Color.green.opacity(0.95), false, .success)
+        }
+        if lower.contains("allow") || lower.contains("approve") || lower.contains("confirm")
+            || lower.contains("[y/n]") || lower.contains("(y/n)")
+            || lower.contains("请确认") || lower.contains("请选择") || lower.contains("是否允许")
+            || lower.contains("running") || lower.contains("executing") || lower.contains("processing")
+            || lower.contains("thinking") || lower.contains("analyzing")
+            || lower.contains("处理中") || lower.contains("执行中") || lower.contains("思考中") {
+            return (Color.green.opacity(0.95), true, .running)
+        }
+        return (Color.green.opacity(0.95), false, .idle)
+    }
+
+    private func taskSecondaryText(
+        for session: ITerm2IntegrationService.Session,
+        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind)
+    ) -> String {
+        if visual.kind == .idle {
+            let titleLower = session.title.lowercased()
+            if titleLower.contains("claude") {
+                return "当前未运行任务"
+            }
+            return "当前会话未启动 claude"
+        }
+        if visual.kind == .error {
+            return taskPromptAndErrorTextTwoLines(from: session.tailOutput)
+        }
+        return taskPromptAndReplyTextTwoLines(from: session.tailOutput)
+    }
+
+    private func taskRowBackgroundColor(
+        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind),
+        isMuted: Bool
+    ) -> Color {
+        let base: Color = {
+            switch visual.kind {
+            case .idle:
+                return Color.green.opacity(0.14)
+            case .running:
+                return Color.green.opacity(0.16)
+            case .success:
+                return Color.green.opacity(0.14)
+            case .error:
+                return Color.red.opacity(0.16)
+            }
+        }()
+        if isMuted { return base.opacity(0.35) }
+        return base
+    }
+
+    private func taskRowBorderColor(
+        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind),
+        isMuted: Bool
+    ) -> Color {
+        let base: Color = {
+            switch visual.kind {
+            case .idle:
+                return Color.green.opacity(0.30)
+            case .running:
+                return Color.green.opacity(0.34)
+            case .success:
+                return Color.green.opacity(0.30)
+            case .error:
+                return Color.red.opacity(0.34)
+            }
+        }()
+        if isMuted { return base.opacity(0.45) }
+        return base
+    }
+
+    private func lastQuestionText(from tail: String) -> String {
+        let lines = normalizedTaskOutputLines(from: tail)
+        for line in lines.reversed() {
+            if line.hasSuffix("?") || line.contains("？") {
+                return line
+            }
+            if line.hasPrefix(">") {
+                return line
+            }
+        }
+        if let last = lines.last {
+            if last.count > 88 { return String(last.prefix(88)) + "…" }
+            return last
+        }
+        return "暂无可展示输出"
+    }
+
+    private func taskPromptAndReplyTextTwoLines(from tail: String) -> String {
+        let displayLines = normalizedTaskDisplayLines(from: tail)
+        let latestPrompt = extractLatestUserPrompt(from: tail)
+        let latestReply = displayLines.reversed().first(where: { !isUserInputCommandLine($0) })
+
+        if let prompt = latestPrompt, let reply = latestReply {
+            return "\(truncateLine(prompt, max: 30))\n\(truncateLine(reply, max: 88))"
+        }
+        if let reply = latestReply {
+            return "（未识别到提问）\n\(truncateLine(reply, max: 88))"
+        }
+        return lastQuestionText(from: tail)
+    }
+
+    private func taskPromptAndErrorTextTwoLines(from tail: String) -> String {
+        let latestPrompt = extractLatestUserPrompt(from: tail)
+        let errorText = lastErrorText(from: tail)
+
+        if let prompt = latestPrompt {
+            return "\(truncateLine(prompt, max: 30))\n\(truncateLine(errorText, max: 88))"
+        }
+        return "（未识别到提问）\n\(truncateLine(errorText, max: 88))"
+    }
+
+    private func lastErrorText(from tail: String) -> String {
+        let lines = normalizedTaskOutputLines(from: tail)
+
+        let markers = ["error", "failed", "exception", "unauthorized", "auth_error", "401", "timeout", "报错", "失败", "错误", "超时"]
+        for line in lines.reversed() {
+            let lower = line.lowercased()
+            if markers.contains(where: { lower.contains($0) }) {
+                if line.count > 88 { return String(line.prefix(88)) + "…" }
+                return line
+            }
+        }
+        if let last = lines.last {
+            if last.count > 88 { return String(last.prefix(88)) + "…" }
+            return last
+        }
+        return "检测到异常"
+    }
+
+    private func isBannedClaudePromptLine(_ line: String) -> Bool {
+        _ = line
+        return false
+    }
+
+    private func isTaskNoiseLine(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        let noiseMarkers = [
+            "esc to interrupt",
+            "image in clipboard",
+            "ctrl+v to paste",
+            "for shortcuts",
+            "update available",
+            "run: brew upgrade claude-code",
+            "claude code (",
+            "claude code v",
+            "sonnet",
+            "api usage",
+            "recent activity",
+            "tips for getting started",
+            "welcome back"
+        ]
+        if noiseMarkers.contains(where: { lower.contains($0) }) {
+            return true
+        }
+        // 纯装饰线/分隔线等无业务含义文本。
+        let stripped = lower.replacingOccurrences(of: " ", with: "")
+        if stripped.allSatisfy({ "-_=|·•:".contains($0) }) {
+            return true
+        }
+        return false
+    }
+
+    private func isClaudeInputAreaLine(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        let inputMarkers = [
+            "send message",
+            "shift+enter",
+            "press enter",
+            "type a message",
+            "ask claude",
+            "esc to interrupt"
+        ]
+        if inputMarkers.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        // Claude TUI 输入区/边框字符（常见于底部双输入框并排）。
+        if line.contains("╭") || line.contains("╰")
+            || line.contains("┌") || line.contains("└")
+            || line.contains("│") || line.contains("┃")
+            || line.contains("┆") || line.contains("─") {
+            return true
+        }
+
+        // 纯占位输入前缀："> "、":" 等
+        if line == ":" || line == ">" || line.hasPrefix("> ") {
+            return true
+        }
+        return false
+    }
+
+    private func isUserInputCommandLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("❯") || trimmed.hasPrefix("›") || trimmed.hasPrefix("»") || trimmed.hasPrefix(">") {
+            return true
+        }
+        return false
+    }
+
+    private func extractLatestUserPrompt(from tail: String) -> String? {
+        let lines = tail
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for line in lines.reversed() {
+            guard isUserInputCommandLine(line) else { continue }
+            var prompt = line
+                .replacingOccurrences(of: "^[❯›»>]\\s*", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if prompt.isEmpty { continue }
+            if isTaskNoiseLine(prompt) || isClaudeInputAreaLine(prompt) { continue }
+            // 避免把 Claude 的输出占位句误当“用户输入内容”
+            if prompt.lowercased().contains("what should claude do") { continue }
+            if prompt.count > 120 {
+                prompt = String(prompt.prefix(120))
+            }
+            return prompt
+        }
+        return nil
+    }
+
+    private func normalizedTaskOutputLines(from tail: String) -> [String] {
+        tail
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { !isUserInputCommandLine($0) }
+            .filter { !isBannedClaudePromptLine($0) }
+            .filter { !isTaskNoiseLine($0) }
+            .filter { !isClaudeInputAreaLine($0) }
+    }
+
+    private func normalizedTaskDisplayLines(from tail: String) -> [String] {
+        tail
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { !isTaskNoiseLine($0) }
+            .filter { !isClaudeInputAreaLine($0) }
+    }
+
+    private func truncateLine(_ text: String, max: Int) -> String {
+        if text.count <= max { return text }
+        return String(text.prefix(max)) + "…"
+    }
+
     private func stopClaudeRightSlotFlash() {
         claudeRightSlotFlashVisible = false
         claudeRightSlotFlashPulse = false
+    }
+
+    private func isPillIssueSuppressed(text: String, tone: String) -> Bool {
+        purgeExpiredPillSuppressions()
+        let key = pillIssueKey(text: text, tone: tone)
+        if let until = pillSuppressedIssueUntil[key], until > Date() {
+            return true
+        }
+        return false
+    }
+
+    private func suppressPillIssue(text: String, tone: String, seconds: TimeInterval) {
+        let key = pillIssueKey(text: text, tone: tone)
+        pillSuppressedIssueUntil[key] = Date().addingTimeInterval(seconds)
+        purgeExpiredPillSuppressions()
+    }
+
+    private func purgeExpiredPillSuppressions() {
+        let now = Date()
+        pillSuppressedIssueUntil = pillSuppressedIssueUntil.filter { $0.value > now }
+    }
+
+    private func pillIssueKey(text: String, tone: String) -> String {
+        var normalized = text.lowercased()
+        normalized = normalized.replacingOccurrences(of: "[0-9a-f]{6,}", with: "#", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: "\\b\\d+\\b", with: "#", options: .regularExpression)
+        return "\(tone)|\(normalized)"
     }
 
 }

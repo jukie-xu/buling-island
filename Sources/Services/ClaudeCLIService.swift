@@ -8,7 +8,7 @@ final class ClaudeCLIService: ObservableObject {
     @Published var lastError: String?
 
     /// 解析出的 Claude CLI 可执行路径及安装状态。
-    enum InstallStatus {
+    enum InstallStatus: Equatable {
         case unknown
         case checking
         case installed(path: String)
