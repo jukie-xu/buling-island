@@ -223,9 +223,9 @@ final class PanelManager {
 
     /// 收缩态：窗口位置 + pill 全局点击热区与 `IslandView` 一致。
     @MainActor
-    func syncIslandPanelLayout(notch: NotchInfo, pillTotalWidth: CGFloat) {
+    func syncIslandPanelLayout(notch: NotchInfo, pillTotalWidth: CGFloat, extraHeight: CGFloat = 0) {
         updatePanelFrame(notch: notch)
-        setCollapsedPillRect(notch: notch, width: pillTotalWidth)
+        setCollapsedPillRect(notch: notch, width: pillTotalWidth, extraHeight: extraHeight)
     }
 
     /// 从台前调度等场景恢复后重挂全局点击监听（系统偶发使 monitor 失效）。
@@ -276,7 +276,7 @@ final class PanelManager {
                 left: s.pillLeftSlot,
                 right: s.pillRightSlot
             )
-            setCollapsedPillRect(notch: notch, width: w)
+            setCollapsedPillRect(notch: notch, width: w, extraHeight: 0)
         }
     }
 
@@ -349,8 +349,8 @@ final class PanelManager {
 
     /// 收缩态热区宽度随左右信息槽变化时更新。
     @MainActor
-    func setCollapsedPillRect(notch: NotchInfo, width: CGFloat) {
-        let pillH = notch.notchHeight + PillLayout.visualHeightOverhang
+    func setCollapsedPillRect(notch: NotchInfo, width: CGFloat, extraHeight: CGFloat = 0) {
+        let pillH = notch.notchHeight + PillLayout.visualHeightOverhang + extraHeight
         let w = width + 2 * PillLayout.visualWidthOverhang
         let pillX = notch.rect.midX - w / 2
         let pillY = notch.screenFrame.maxY - pillH + PillLayout.visualHeightOverhang / 2

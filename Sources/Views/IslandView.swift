@@ -126,6 +126,7 @@ struct IslandView: View {
         }
         .onChange(of: settings.pillLeftSlot) { _ in syncCollapsedPillHitRect() }
         .onChange(of: settings.pillRightSlot) { _ in syncCollapsedPillHitRect() }
+        .onChange(of: claudeHintExpansionHeight) { _ in syncCollapsedPillHitRect() }
         .onChange(of: notchLayoutKey) { _ in syncCollapsedPillHitRect() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             syncCollapsedPillHitRect()
@@ -247,7 +248,11 @@ struct IslandView: View {
         let n = NotchDetector.layoutNotch()
         if viewModel.state == .collapsed {
             let w = PillLayout.totalWidth(notch: n, left: settings.pillLeftSlot, right: settings.pillRightSlot)
-            PanelManager.shared.syncIslandPanelLayout(notch: n, pillTotalWidth: w)
+            PanelManager.shared.syncIslandPanelLayout(
+                notch: n,
+                pillTotalWidth: w,
+                extraHeight: 1 + claudeHintExpansionHeight
+            )
         } else {
             PanelManager.shared.repositionPanelWithNotchLayout(n)
         }
