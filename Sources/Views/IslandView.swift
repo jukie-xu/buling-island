@@ -1108,37 +1108,6 @@ struct IslandView: View {
                     )
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("监控动作")
-                            .font(.system(size: taskFontBase, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.88))
-                        Spacer()
-                        Text(iTerm2Integration.monitorHeartbeatText ?? "未启动")
-                            .font(.system(size: max(9, taskFontBase - 2)))
-                            .foregroundStyle(.white.opacity(0.56))
-                            .lineLimit(1)
-                    }
-                    if iTerm2Integration.monitorActions.isEmpty {
-                        Text("暂无动作日志")
-                            .font(.system(size: max(10, taskFontBase - 1)))
-                            .foregroundStyle(.white.opacity(0.45))
-                            .padding(.vertical, 6)
-                    } else {
-                        ForEach(Array(iTerm2Integration.monitorActions.suffix(8).enumerated()), id: \.offset) { _, line in
-                            Text(line)
-                                .font(.system(size: max(9, taskFontBase - 2)))
-                                .foregroundStyle(.white.opacity(0.62))
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
-                )
             }
             .padding(.top, 2)
         }
@@ -1146,9 +1115,13 @@ struct IslandView: View {
 
     private var taskGroups: [(name: String, tasks: [ITerm2IntegrationService.Session])] {
         let captured = Dictionary(grouping: iTerm2Integration.sessions) { session in
-            session.terminalApp.isEmpty ? "iTerm2" : session.terminalApp
+            let app = session.terminalApp.trimmingCharacters(in: .whitespacesAndNewlines)
+            if app == "iTerm2" || app == "iTerm" || app.isEmpty {
+                return "iTerm"
+            }
+            return app
         }
-        let orderedNames = ["iTerm2", "iTerm", "Ghostty", "Terminal"]
+        let orderedNames = ["iTerm", "Terminal"]
         var result: [(name: String, tasks: [ITerm2IntegrationService.Session])] = []
         for name in orderedNames {
             result.append((name: name, tasks: captured[name] ?? []))

@@ -20,8 +20,6 @@ final class ITerm2IntegrationService: ObservableObject {
     @Published private(set) var interactionHint: String?
     @Published private(set) var lastError: String?
     @Published private(set) var statusRevision: Int = 0
-    @Published private(set) var monitorHeartbeatText: String?
-    @Published private(set) var monitorActions: [String] = []
     @Published private(set) var mutedSessionIDs: Set<String> = []
     @Published private(set) var activeSessionIDs: Set<String> = []
 
@@ -75,8 +73,6 @@ final class ITerm2IntegrationService: ObservableObject {
         latestStatusSourceTail = nil
         interactionHint = nil
         lastError = nil
-        monitorHeartbeatText = nil
-        monitorActions.removeAll()
         acknowledgedErrorUntil.removeAll()
         acknowledgedSessionSignatureUntil.removeAll()
         sessionLastChangedAt.removeAll()
@@ -91,7 +87,6 @@ final class ITerm2IntegrationService: ObservableObject {
         if let sig = sessionErrorSignature(for: session.id, tail: session.tailOutput) {
             acknowledgedSessionSignatureUntil[sig] = Date().addingTimeInterval(180)
         }
-        appendMonitorAction("已处理该提醒（3 分钟内不重复）：\(session.title)")
         statusRevision &+= 1
     }
 
@@ -107,7 +102,6 @@ final class ITerm2IntegrationService: ObservableObject {
             affected += 1
         }
         if affected > 0 {
-            appendMonitorAction("已一键清理 \(affected) 个提醒（3 分钟内不重复）")
             statusRevision &+= 1
         }
     }
@@ -119,10 +113,8 @@ final class ITerm2IntegrationService: ObservableObject {
     func setSessionMuted(_ muted: Bool, sessionID: String) {
         if muted {
             mutedSessionIDs.insert(sessionID)
-            appendMonitorAction("已静音会话：\(sessionID)")
         } else {
             mutedSessionIDs.remove(sessionID)
-            appendMonitorAction("取消静音会话：\(sessionID)")
         }
         UserDefaults.standard.set(Array(mutedSessionIDs), forKey: mutedSessionDefaultsKey)
         statusRevision &+= 1
@@ -204,24 +196,17 @@ final class ITerm2IntegrationService: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     if process.terminationStatus == 0, out == "__OK__" {
-                        self.appendMonitorAction("已跳转到 \(session.terminalApp) 会话 \(session.id)")
                     } else if out == "__APP_NOT_RUNNING__" {
-                        self.appendMonitorAction("跳转失败：\(session.terminalApp) 未运行")
                     } else if out == "__APP_NOT_SUPPORTED__" {
-                        self.appendMonitorAction("跳转失败：暂不支持 \(session.terminalApp)")
                     } else if out == "__SESSION_NOT_FOUND__" {
-                        self.appendMonitorAction("跳转失败：会话不存在（可能已关闭）")
                     } else if !err.isEmpty {
-                        self.appendMonitorAction("跳转失败：\(err)")
                     } else {
-                        self.appendMonitorAction("跳转失败：未知错误")
                     }
                     self.statusRevision &+= 1
                 }
             } catch {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.appendMonitorAction("跳转失败：\(error.localizedDescription)")
                     self.statusRevision &+= 1
                 }
             }
@@ -246,7 +231,6 @@ final class ITerm2IntegrationService: ObservableObject {
         guard isEnabled else { return }
         guard !inFlight else { return }
         inFlight = true
-        appendMonitorAction("开始轮询 \(timeStampNow())")
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let result = Self.fetchSnapshotFromITerm2()
@@ -270,9 +254,7 @@ final class ITerm2IntegrationService: ObservableObject {
             latestStatusSourceTail = nil
             interactionHint = nil
             lastError = nil
-            monitorHeartbeatText = "iTerm2 未运行"
             activeSessionIDs = []
-            appendMonitorAction("未检测到 iTerm/iTerm2 进程")
             statusRevision &+= 1
             consecutiveFailures = 0
             restartTimer(interval: currentEffectiveInterval())
@@ -292,8 +274,6 @@ final class ITerm2IntegrationService: ObservableObject {
                 )
             }
             sessions = mapped
-            monitorHeartbeatText = "监控中 \(timeStampNow()) · 会话 \(rows.count)"
-            appendMonitorAction("抓取成功：总会话 \(rows.count)")
 
             var bestStatus: (score: Int, text: String, tone: String, rowID: String, tail: String)?
             let now = Date()
@@ -358,8 +338,6 @@ final class ITerm2IntegrationService: ObservableObject {
             latestStatusTone = "error"
             latestStatusSourceSessionID = nil
             latestStatusSourceTail = nil
-            monitorHeartbeatText = "监控异常 \(timeStampNow())"
-            appendMonitorAction("抓取失败：\(reason)")
             statusRevision &+= 1
         }
     }
@@ -427,20 +405,6 @@ final class ITerm2IntegrationService: ObservableObject {
     private func truncate(_ text: String, max: Int) -> String {
         guard text.count > max else { return text }
         return String(text.prefix(max)) + "…"
-    }
-
-    private func timeStampNow() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f.string(from: Date())
-    }
-
-    private func appendMonitorAction(_ action: String) {
-        let line = "[\(timeStampNow())] \(action)"
-        monitorActions.append(line)
-        if monitorActions.count > 30 {
-            monitorActions.removeFirst(monitorActions.count - 30)
-        }
     }
 
     private func errorKey(for sessionID: String, tail: String) -> String {
