@@ -18,7 +18,7 @@ private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "rectangle.inset.filled.and.person.filled"
         case .claude: return "terminal"
-        case .tasks: return "list.bullet.rectangle"
+        case .tasks: return "checklist"
         case .layout: return "square.grid.2x2"
         case .appearance: return "paintbrush"
         case .animation: return "sparkles.rectangle.stack"
@@ -96,9 +96,9 @@ struct SettingsView: View {
 
             VStack(spacing: 4) {
                 sidebarRow(.dashboard)
+                appPanelGroup
                 sidebarRow(.claude)
                 sidebarRow(.tasks)
-                appPanelGroup
             }
             .padding(.horizontal, 10)
 
@@ -173,12 +173,12 @@ struct SettingsView: View {
     private var appPanelGroup: some View {
         VStack(spacing: 4) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(.easeInOut(duration: 0.2)) {
                     appPanelExpanded.toggle()
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "rectangle.3.group")
+                    Image(systemName: "appstore")
                         .font(.system(size: 14))
                         .frame(width: 22)
                     Text("应用面板")
@@ -208,9 +208,10 @@ struct SettingsView: View {
                         appPanelChildRow(section)
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: appPanelExpanded)
     }
 
     private func appPanelChildRow(_ section: SettingsSidebarSection) -> some View {
