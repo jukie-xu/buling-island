@@ -12,6 +12,10 @@ Buling Island 将 MacBook 的刘海区域变成一个控制中心：默认是快
 
 Buling Island turns your MacBook's notch area into a control surface: a quick app launcher by default, plus optional **Claude panel** with an embedded terminal, Claude Code CLI workflows, and experimental iTerm2 session integration. Click the notch to expand the panel with search, folders, custom layout, and display modes.
 
+## Download / 下载
+
+- **DMG（v1.0.0）**: `https://github.com/jukie-xu/buling-island/blob/main/BulingIsland_v1.0.0.dmg`
+
 ## Features / 功能
 
 - **双模式面板 / Dual Modes** — 展开后可在 **应用** 与 **Claude** 面板间切换（顶部模式按钮）
