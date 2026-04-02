@@ -7,9 +7,8 @@ struct IslandView: View {
     @ObservedObject private var settings = SettingsManager.shared
     @StateObject private var pillHud = PillHudViewModel()
     @StateObject private var claudeCLI = ClaudeCLIService()
-    @StateObject private var iTerm2Integration = ITerm2IntegrationService()
+    @StateObject private var terminalCapture = TerminalCaptureService()
     @State private var isLaunchpadEditing = false
-    @State private var expandedContentMode: ExpandedContentMode = .appStore
     @State private var claudeInteractionHint: String?
     @State private var claudePillStatusText: String?
     @State private var claudePillStatusTone: String = "info"
@@ -25,12 +24,6 @@ struct IslandView: View {
     @State private var taskBreathPhase = false
     @State private var taskWavePhase = false
     @State private var pillSuppressedIssueUntil: [String: Date] = [:]
-
-    private enum ExpandedContentMode {
-        case appStore
-        case claude
-        case tasks
-    }
 
     private var fillColor: Color {
         .primary
@@ -96,12 +89,13 @@ struct IslandView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            viewModel.syncCollapsedPillTone(claudePillStatusTone)
             if viewModel.state == .collapsed {
                 pillHud.start()
                 syncCollapsedPillHitRect()
             }
             refreshClaudeBottomHintAutoCollapse()
-            syncITerm2CaptureConfig()
+            syncTerminalCaptureConfig()
             if !taskBreathPhase {
                 withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
                     taskBreathPhase = true
@@ -122,7 +116,7 @@ struct IslandView: View {
                 stopClaudeRightSlotFlash()
                 clearPillAlertsAfterOpen()
             }
-            syncITerm2CaptureConfig()
+            syncTerminalCaptureConfig()
         }
         .onChange(of: settings.pillLeftSlot) { _ in syncCollapsedPillHitRect() }
         .onChange(of: settings.pillRightSlot) { _ in syncCollapsedPillHitRect() }
@@ -140,6 +134,10 @@ struct IslandView: View {
             triggerClaudeRightSlotFlashIfNeeded()
         }
         .onChange(of: claudePillStatusTone) { tone in
+            viewModel.syncCollapsedPillTone(tone)
+            if tone == "error" || tone == "warn", viewModel.pillAbnormalExpandTarget == nil {
+                viewModel.notePillAbnormalFromClaudePanel()
+            }
             if tone == "warn" || tone == "error" {
                 triggerClaudeRightSlotFlashIfNeeded()
             }
@@ -161,6 +159,7 @@ struct IslandView: View {
             }
             claudePillStatusText = "错误: \(err)"
             claudePillStatusTone = "error"
+            viewModel.notePillAbnormalFromClaudePanel()
             claudeStatusRevision &+= 1
             triggerClaudeRightSlotFlashIfNeeded()
             refreshClaudeBottomHintAutoCollapse()
@@ -182,21 +181,27 @@ struct IslandView: View {
             refreshClaudeBottomHintAutoCollapse()
         }
         .onChange(of: settings.claudeEnableITerm2Capture) { _ in
-            syncITerm2CaptureConfig()
+            syncTerminalCaptureConfig()
         }
         .onChange(of: settings.claudeITerm2PollInterval) { _ in
-            syncITerm2CaptureConfig()
+            syncTerminalCaptureConfig()
         }
-        .onChange(of: expandedContentMode) { mode in
-            if mode == .tasks {
-                syncITerm2CaptureConfig()
+        .onChange(of: settings.defaultExpandedPanel) { newDefault in
+            if viewModel.state == .collapsed {
+                viewModel.expandedPanelMode = newDefault
             }
         }
-        .onChange(of: iTerm2Integration.statusRevision) { _ in
-            if let text = iTerm2Integration.latestStatusText, !text.isEmpty {
-                let tone = iTerm2Integration.latestStatusTone
+        .onChange(of: viewModel.expandedPanelMode) { mode in
+            if mode == .tasks {
+                syncTerminalCaptureConfig()
+                TerminalAutomationAccessProber.requestPromptsForSupportedTerminalHosts()
+            }
+        }
+        .onChange(of: terminalCapture.statusRevision) { _ in
+            if let text = terminalCapture.latestStatusText, !text.isEmpty {
+                let tone = terminalCapture.latestStatusTone
                 if tone == "warn" || tone == "error" || tone == "success" {
-                    if let tail = iTerm2Integration.latestStatusSourceTail, !tail.isEmpty {
+                    if let tail = terminalCapture.latestStatusSourceTail, !tail.isEmpty {
                         if tone == "error" {
                             let extracted = lastErrorText(from: tail)
                             if isPillIssueSuppressed(text: extracted, tone: tone) {
@@ -223,14 +228,19 @@ struct IslandView: View {
                     }
                 }
             }
-            if let hint = iTerm2Integration.interactionHint, !hint.isEmpty {
-                claudeInteractionHint = hint
-            }
-            if let err = iTerm2Integration.lastError, !err.isEmpty {
+            claudeInteractionHint = terminalCapture.interactionHint.flatMap { $0.isEmpty ? nil : $0 }
+            if let err = terminalCapture.lastError, !err.isEmpty {
                 claudePillStatusText = err
                 claudePillStatusTone = "error"
                 claudeStatusRevision &+= 1
                 triggerClaudeRightSlotFlashIfNeeded()
+            }
+            if let err = terminalCapture.lastError, !err.isEmpty {
+                viewModel.notePillAbnormalFromExternalTerminalCapture()
+            } else if terminalCapture.latestStatusTone == "error" || terminalCapture.latestStatusTone == "warn" {
+                viewModel.notePillAbnormalFromExternalTerminalCapture()
+            } else {
+                viewModel.clearTerminalPillAbnormalRoutingIfNeeded(currentTone: terminalCapture.latestStatusTone)
             }
             refreshClaudeBottomHintAutoCollapse()
         }
@@ -577,6 +587,18 @@ struct IslandView: View {
         CGFloat(settings.taskPanelFontSize)
     }
 
+    /// 已选项目且 CLI 可用时，让 Claude 面板子树始终留在层级里（切到其他标签或收起 pill 仅隐藏），避免卸载 `ClaudeTerminalView` 导致会话重启。
+    private var claudeSessionHostShouldPersist: Bool {
+        if case .installed = claudeCLI.installStatus, claudeCLI.projectDirectory != nil {
+            return true
+        }
+        return false
+    }
+
+    private var claudePanelLayerInteractive: Bool {
+        viewModel.expandedPanelMode == .claude && viewModel.state == .expanded
+    }
+
     private var expandedView: some View {
         VStack(spacing: 0) {
             // Top bar — flush with screen top, no rounded corners
@@ -610,51 +632,71 @@ struct IslandView: View {
                 .padding(.trailing, 8)
             }
 
-            switch expandedContentMode {
-            case .appStore:
-                SearchBarView(text: $viewModel.searchText)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 10)
-                    .onTapGesture {
-                        exitLaunchpadEditMode()
-                    }
+            ZStack(alignment: .topLeading) {
+                if claudeSessionHostShouldPersist {
+                    claudePanelView
+                        .opacity(claudePanelLayerInteractive ? 1 : 0)
+                        .allowsHitTesting(claudePanelLayerInteractive)
+                }
 
-                // Switch view based on display mode (search always uses grid)
-                if !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                    AppGridView(
-                        apps: viewModel.filteredApps,
-                        onAppTap: { app in viewModel.launchApp(app) }
-                    )
-                } else {
-                    switch settings.displayMode {
-                    case .grid:
-                        AppGridView(
-                            apps: viewModel.filteredApps,
-                            onAppTap: { app in viewModel.launchApp(app) }
-                        )
-                    case .alphabetical:
-                        AlphabetGridView(
-                            apps: viewModel.filteredApps,
-                            onAppTap: { app in viewModel.launchApp(app) }
-                        )
-                    case .launchpad:
-                        LaunchpadGridView(
-                            allApps: viewModel.allApps,
-                            onAppTap: { app in viewModel.launchApp(app) },
-                            folderManager: FolderManager.shared,
-                            isEditing: $isLaunchpadEditing
-                        )
+                Group {
+                    switch viewModel.expandedPanelMode {
+                    case .appStore:
+                        // ZStack 内多个子视图会叠在同一位置，必须用 VStack 保持搜索栏在上、网格在下。
+                        VStack(alignment: .leading, spacing: 0) {
+                            SearchBarView(text: $viewModel.searchText)
+                                .padding(.horizontal, 16)
+                                .padding(.top, 8)
+                                .padding(.bottom, 10)
+                                .onTapGesture {
+                                    exitLaunchpadEditMode()
+                                }
+
+                            if !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                                AppGridView(
+                                    apps: viewModel.filteredApps,
+                                    onAppTap: { app in viewModel.launchApp(app) }
+                                )
+                            } else {
+                                switch settings.displayMode {
+                                case .grid:
+                                    AppGridView(
+                                        apps: viewModel.filteredApps,
+                                        onAppTap: { app in viewModel.launchApp(app) }
+                                    )
+                                case .alphabetical:
+                                    AlphabetGridView(
+                                        apps: viewModel.filteredApps,
+                                        onAppTap: { app in viewModel.launchApp(app) }
+                                    )
+                                case .launchpad:
+                                    LaunchpadGridView(
+                                        allApps: viewModel.allApps,
+                                        onAppTap: { app in viewModel.launchApp(app) },
+                                        folderManager: FolderManager.shared,
+                                        isEditing: $isLaunchpadEditing
+                                    )
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    case .claude:
+                        if claudeSessionHostShouldPersist {
+                            Color.clear
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
+                        } else {
+                            claudePanelView
+                        }
+                    case .tasks:
+                        claudeTaskBoardSection
+                            .padding(.horizontal, 18)
+                            .padding(.top, 10)
+                            .padding(.bottom, 14)
                     }
                 }
-            case .claude:
-                claudePanelView
-            case .tasks:
-                claudeTaskBoardSection
-                    .padding(.horizontal, 18)
-                    .padding(.top, 10)
-                    .padding(.bottom, 14)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         // Leave horizontal margins for the top flare geometry; body width stays the same.
         .padding(.horizontal, Self.expandedTopCornerRadius)
@@ -677,12 +719,17 @@ struct IslandView: View {
                 exitLaunchpadEditMode()
             }
         }
+        .onAppear {
+            if viewModel.expandedPanelMode == .tasks {
+                TerminalAutomationAccessProber.requestPromptsForSupportedTerminalHosts()
+            }
+        }
     }
 
-    private func appStoreModeButton(mode: ExpandedContentMode) -> some View {
-        let selected = expandedContentMode == mode
+    private func appStoreModeButton(mode: ExpandedPanelMode) -> some View {
+        let selected = viewModel.expandedPanelMode == mode
         return Button {
-            expandedContentMode = mode
+            viewModel.expandedPanelMode = mode
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -706,10 +753,10 @@ struct IslandView: View {
         .frame(width: size, height: size)
     }
 
-    private func claudeModeButton(mode: ExpandedContentMode) -> some View {
-        let selected = expandedContentMode == mode
+    private func claudeModeButton(mode: ExpandedPanelMode) -> some View {
+        let selected = viewModel.expandedPanelMode == mode
         return Button {
-            expandedContentMode = mode
+            viewModel.expandedPanelMode = mode
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -722,10 +769,10 @@ struct IslandView: View {
         .accessibilityLabel("Claude 面板")
     }
 
-    private func taskModeButton(mode: ExpandedContentMode) -> some View {
-        let selected = expandedContentMode == mode
+    private func taskModeButton(mode: ExpandedPanelMode) -> some View {
+        let selected = viewModel.expandedPanelMode == mode
         return Button {
-            expandedContentMode = mode
+            viewModel.expandedPanelMode = mode
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -1013,7 +1060,7 @@ struct IslandView: View {
                         } else {
                             ForEach(group.tasks, id: \.id) { task in
                                 let visual = taskVisualMeta(for: task)
-                                let isMuted = iTerm2Integration.isSessionMuted(task.id)
+                                let isMuted = terminalCapture.isSessionMuted(task.id)
                                 VStack(alignment: .leading, spacing: 7) {
                                     HStack(alignment: .center, spacing: 8) {
                                         Circle()
@@ -1041,7 +1088,7 @@ struct IslandView: View {
                                                 "Mute",
                                                 isOn: Binding(
                                                     get: { isMuted },
-                                                    set: { iTerm2Integration.setSessionMuted($0, sessionID: task.id) }
+                                                    set: { terminalCapture.setSessionMuted($0, sessionID: task.id) }
                                                 )
                                             )
                                             .toggleStyle(.switch)
@@ -1069,7 +1116,7 @@ struct IslandView: View {
                                         .truncationMode(.tail)
 
                                     HStack(spacing: 6) {
-                                        Text(task.terminalApp)
+                                        Text(task.terminalKind.rawValue)
                                         Text("·")
                                         Text(task.tty.isEmpty ? "tty 未知" : task.tty)
                                     }
@@ -1113,16 +1160,16 @@ struct IslandView: View {
         }
     }
 
-    private var taskGroups: [(name: String, tasks: [ITerm2IntegrationService.Session])] {
-        let captured = Dictionary(grouping: iTerm2Integration.sessions) { session in
-            let app = session.terminalApp.trimmingCharacters(in: .whitespacesAndNewlines)
-            if app == "iTerm2" || app == "iTerm" || app.isEmpty {
+    private var taskGroups: [(name: String, tasks: [CapturedTerminalSession])] {
+        let captured = Dictionary(grouping: terminalCapture.sessions) { session in
+            let app = session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if app.isEmpty {
                 return "iTerm"
             }
             return app
         }
         let orderedNames = ["iTerm", "Terminal"]
-        var result: [(name: String, tasks: [ITerm2IntegrationService.Session])] = []
+        var result: [(name: String, tasks: [CapturedTerminalSession])] = []
         for name in orderedNames {
             result.append((name: name, tasks: captured[name] ?? []))
         }
@@ -1136,17 +1183,17 @@ struct IslandView: View {
     private var iTerm2SessionStrip: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("iTerm2 会话")
+                Text("外部终端会话")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.82))
                 Circle()
-                    .fill(iTerm2Integration.isITerm2Running ? Color.green.opacity(0.9) : Color.white.opacity(0.35))
+                    .fill(terminalCapture.isTerminalHostReachable ? Color.green.opacity(0.9) : Color.white.opacity(0.35))
                     .frame(width: 6, height: 6)
-                Text(iTerm2Integration.isITerm2Running ? "运行中" : "未运行")
+                Text(terminalCapture.isTerminalHostReachable ? "运行中" : "未运行")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.white.opacity(0.65))
                 Spacer()
-                Text("\(iTerm2Integration.sessions.count) 个 Claude 会话")
+                Text("\(terminalCapture.sessions.count) 个 Claude 会话")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.55))
             }
@@ -1157,10 +1204,10 @@ struct IslandView: View {
                     .fill(Color.white.opacity(0.06))
             )
 
-            if !iTerm2Integration.sessions.isEmpty {
+            if !terminalCapture.sessions.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(iTerm2Integration.sessions.prefix(5)) { session in
+                        ForEach(terminalCapture.sessions.prefix(5)) { session in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(session.title.isEmpty ? "Claude" : session.title)
                                     .font(.system(size: 10, weight: .semibold))
@@ -1324,8 +1371,8 @@ struct IslandView: View {
         }
     }
 
-    private func syncITerm2CaptureConfig() {
-        let shouldEnableCapture = settings.claudeEnableITerm2Capture || expandedContentMode == .tasks
+    private func syncTerminalCaptureConfig() {
+        let shouldEnableCapture = settings.claudeEnableITerm2Capture || viewModel.expandedPanelMode == .tasks
         let effectivePollInterval: Double = {
             if viewModel.state == .expanded {
                 // 展开态提升刷新频率，让任务输出更接近实时滚动更新。
@@ -1333,7 +1380,7 @@ struct IslandView: View {
             }
             return settings.claudeITerm2PollInterval
         }()
-        iTerm2Integration.updateConfig(
+        terminalCapture.updateConfig(
             enabled: shouldEnableCapture,
             pollInterval: effectivePollInterval
         )
@@ -1343,7 +1390,9 @@ struct IslandView: View {
         if let text = claudePillStatusText, !text.isEmpty {
             suppressPillIssue(text: text, tone: claudePillStatusTone, seconds: 180)
         }
-        iTerm2Integration.acknowledgeAllCurrentIssues()
+        viewModel.clearPillExpandRouting()
+        viewModel.syncCollapsedPillTone("info")
+        terminalCapture.acknowledgeAllCurrentIssues()
         claudePillStatusText = nil
         claudePillStatusTone = "info"
         claudeInteractionHint = nil
@@ -1354,9 +1403,14 @@ struct IslandView: View {
         stopClaudeRightSlotFlash()
     }
 
-    private func jumpToExternalTask(session: ITerm2IntegrationService.Session) {
-        iTerm2Integration.acknowledgeCurrentIssue(for: session)
-        iTerm2Integration.activate(session: session)
+    private func jumpToExternalTask(session: CapturedTerminalSession) {
+        terminalCapture.acknowledgeCurrentIssue(for: session)
+        terminalCapture.activate(session: session)
+        let visual = taskVisualMeta(for: session)
+        if visual.kind == .error {
+            viewModel.expandToTaskPanel()
+            return
+        }
         if viewModel.state == .expanded {
             viewModel.toggle()
         }
@@ -1371,7 +1425,7 @@ struct IslandView: View {
         case error
     }
 
-    private func taskVisualMeta(for session: ITerm2IntegrationService.Session) -> (color: Color, isRunning: Bool, kind: TaskStatusKind) {
+    private func taskVisualMeta(for session: CapturedTerminalSession) -> (color: Color, isRunning: Bool, kind: TaskStatusKind) {
         let lines = normalizedTaskOutputLines(from: session.tailOutput)
         let compact = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = compact.lowercased()
@@ -1388,7 +1442,7 @@ struct IslandView: View {
             || lower.contains("报错") || lower.contains("失败") || lower.contains("错误") || lower.contains("超时") {
             return (Color.red.opacity(0.92), false, .error)
         }
-        if iTerm2Integration.activeSessionIDs.contains(session.id) {
+        if terminalCapture.activeSessionIDs.contains(session.id) {
             return (Color.green.opacity(0.95), true, .running)
         }
         if lower.contains("done") || lower.contains("completed") || lower.contains("finished")
@@ -1406,7 +1460,7 @@ struct IslandView: View {
         return (Color.green.opacity(0.95), false, .idle)
     }
 
-    private func looksLikeClaudeSession(_ session: ITerm2IntegrationService.Session) -> Bool {
+    private func looksLikeClaudeSession(_ session: CapturedTerminalSession) -> Bool {
         let titleLower = session.title.lowercased()
         let tailLower = session.tailOutput.lowercased()
         let claudeMarkers = [
@@ -1425,7 +1479,7 @@ struct IslandView: View {
     }
 
     private func taskSecondaryText(
-        for session: ITerm2IntegrationService.Session,
+        for session: CapturedTerminalSession,
         visual: (color: Color, isRunning: Bool, kind: TaskStatusKind)
     ) -> String {
         if visual.kind == .idle {

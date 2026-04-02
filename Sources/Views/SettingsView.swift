@@ -472,27 +472,32 @@ private struct SettingsDashboardTab: View {
 
 
     private var globalTogglesCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
             Text("全局开关")
                 .sectionTitle()
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                toggleCard(
+            defaultExpandedPanelControl
+
+            VStack(spacing: 0) {
+                dashboardToggleRow(
                     title: "点击展开",
                     caption: "点击刘海区域展开面板",
                     isOn: $settings.clickToExpand
                 )
-                toggleCard(
+                dashboardRowDivider
+                dashboardToggleRow(
                     title: "开启灵动岛",
                     caption: "显示顶部刘海启动面板",
                     isOn: $settings.islandEnabled
                 )
-                toggleCard(
+                dashboardRowDivider
+                dashboardToggleRow(
                     title: "全屏时隐藏 pill",
-                    caption: "检测到前台全屏后自动隐藏收缩态 pill",
+                    caption: "前台全屏时自动隐藏收缩态药丸",
                     isOn: $settings.autoHideCollapsedPillInFullscreen
                 )
-                toggleCard(
+                dashboardRowDivider
+                dashboardToggleRow(
                     title: "开机启动",
                     caption: "登录 macOS 时自动启动",
                     isOn: Binding(
@@ -503,88 +508,85 @@ private struct SettingsDashboardTab: View {
                         }
                     )
                 )
-                accessibilityPermissionCard
-                    .gridCellColumns(2)
+                dashboardRowDivider
+                dashboardAccessibilityRow
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color.black.opacity(0.028))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06), lineWidth: 1)
+            )
         }
         .padding(18)
         .cardStyle(colorScheme: colorScheme)
+        .alert("需要在系统设置撤销", isPresented: $showAccessibilityDisableHint) {
+            Button("知道了", role: .cancel) { }
+        } message: {
+            Text("辅助功能权限只能在系统设置中关闭：系统设置 → 隐私与安全性 → 辅助功能。")
+        }
     }
 
-    private func toggleLaunchAtLogin(_ enable: Bool) {
-        do {
-            if enable {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
+    private var defaultExpandedPanelControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("默认展开面板")
+                .font(.system(size: 13, weight: .medium))
+            Picker("默认展开面板", selection: $settings.defaultExpandedPanel) {
+                ForEach(ExpandedPanelMode.allCases) { mode in
+                    Text(expandedPanelSegmentLabel(mode)).tag(mode)
+                }
             }
-        } catch {
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+            .pickerStyle(.segmented)
+            .accessibilityHint("在应用、Claude 与任务三种展开面板间选择默认项")
         }
     }
 
-    private func toggleCard(title: String, caption: String, planned: Bool) -> some View {
-        toggleCardShell(title: title, caption: caption) {
-            Text("规划中")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule(style: .continuous).fill(Color.orange.opacity(0.15)))
+    private func expandedPanelSegmentLabel(_ mode: ExpandedPanelMode) -> String {
+        switch mode {
+        case .appStore: return "应用"
+        case .claude: return "Claude"
+        case .tasks: return "任务"
         }
     }
 
-    private func toggleCard(title: String, caption: String, isOn: Binding<Bool>) -> some View {
-        toggleCardShell(title: title, caption: caption) {
+    private var dashboardRowDivider: some View {
+        Divider()
+            .opacity(colorScheme == .dark ? 0.22 : 0.35)
+    }
+
+    private func dashboardToggleRow(title: String, caption: String, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
             Toggle("", isOn: isOn)
-                .toggleStyle(.switch)
                 .labelsHidden()
                 .controlSize(.small)
         }
+        .padding(.vertical, 11)
     }
 
-    private func toggleCardShell<Control: View>(
-        title: String,
-        caption: String,
-        @ViewBuilder control: () -> Control
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-            Text(caption)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                Text("OFF")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                control()
-                Text("ON")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
+    private var dashboardAccessibilityRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("辅助功能")
+                    .font(.system(size: 13, weight: .medium))
+                Text("全局鼠标：点击刘海、点击外部收起")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
-        )
-    }
-
-    private var accessibilityPermissionCard: some View {
-        toggleCardShell(
-            title: "辅助功能",
-            caption: "用于监听全局鼠标事件（点击刘海、点击外部收起）"
-        ) {
+            Spacer(minLength: 12)
             Toggle(
                 "",
                 isOn: Binding(
@@ -602,14 +604,21 @@ private struct SettingsDashboardTab: View {
                     }
                 )
             )
-            .toggleStyle(.switch)
             .labelsHidden()
             .controlSize(.small)
         }
-        .alert("需要在系统设置撤销", isPresented: $showAccessibilityDisableHint) {
-            Button("知道了", role: .cancel) { }
-        } message: {
-            Text("辅助功能权限只能在系统设置中关闭：系统设置 → 隐私与安全性 → 辅助功能。")
+        .padding(.vertical, 11)
+    }
+
+    private func toggleLaunchAtLogin(_ enable: Bool) {
+        do {
+            if enable {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
         }
     }
 

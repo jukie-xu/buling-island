@@ -26,7 +26,7 @@ Buling Island turns your MacBook's notch area into a control surface: a quick ap
 - **收缩态信息位 / Collapsed Pill Widgets** — 左右槽位可选电量、实时网速等（设置中配置）
 - **全屏时隐藏 pill / Fullscreen Hide** — 可在全屏且为浏览器、播放器等场景时自动隐藏收缩态 pill（可开关）
 - **Claude Code / 内嵌终端** — 选择工作区后启动本机 `claude` CLI（SwiftTerm 渲染），状态可反映在 pill 底部提醒区
-- **iTerm2 捕获（实验） / iTerm2 Capture (Experimental)** — 可选轮询 iTerm2 / Terminal 中的 Claude 会话尾输出，用于提醒与会话条（需在设置中开启并授权自动化相关能力）
+- **外部终端捕获（实验） / External Terminal Capture (Experimental)** — 可选轮询 **iTerm2**、经典 **iTerm**、系统 **终端 (Terminal.app)** 等已接入后端的会话缓冲，用于提醒与会话条（需在设置中开启并为「系统事件」与各终端勾选自动化）
 - **开机自启 / Launch at Login** — 支持 macOS 原生自启动
 - **本地化名称 / Localized Names** — 应用名称自动跟随系统语言
 
@@ -113,7 +113,7 @@ open /Applications/BulingIsland.app
     │   ├── FolderManager           # 文件夹管理
     │   ├── SettingsManager         # 设置管理
     │   ├── ClaudeCLIService        # Claude CLI 检测与状态
-    │   ├── ITerm2IntegrationService # iTerm2 / Terminal 会话（实验）
+    │   ├── TerminalIntegration/    # 外部终端捕获：通用协议 + 各终端后端 + 聚合服务
     │   ├── PillHudViewModel        # 收缩态 HUD / 热区
     │   ├── BatteryPowerReader      # 电量读取
     │   ├── NetworkThroughputReader # 网速读取

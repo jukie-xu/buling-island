@@ -39,6 +39,12 @@ final class IslandViewModel: ObservableObject {
     @Published var allApps: [AppInfo] = []
     @Published var isHovering: Bool = false
     @Published private(set) var isLoadingApps: Bool = false
+    /// 当前展开面板顶栏选中的模式（应用 / Claude / 任务）。
+    @Published var expandedPanelMode: ExpandedPanelMode
+    /// 收缩态药丸底部提示为 error/warn 时，点击药丸应优先打开的面板（外部终端异常 → 任务；内嵌 Claude 异常 → Claude）。
+    var pillAbnormalExpandTarget: ExpandedPanelMode?
+    /// 与药丸 `claudePillStatusTone` 同步，供 `toggle()` 判断是否走异常路由。
+    private(set) var collapsedPillTone: String = "info"
 
     let settings = SettingsManager.shared
     private var appReloadWorkItem: DispatchWorkItem?
@@ -50,8 +56,49 @@ final class IslandViewModel: ObservableObject {
     }
 
     init() {
+        expandedPanelMode = SettingsManager.shared.defaultExpandedPanel
         startWatchingApplicationsFolders()
         loadApps()
+    }
+
+    func syncCollapsedPillTone(_ tone: String) {
+        collapsedPillTone = tone
+    }
+
+    func notePillAbnormalFromExternalTerminalCapture() {
+        pillAbnormalExpandTarget = .tasks
+    }
+
+    func notePillAbnormalFromClaudePanel() {
+        pillAbnormalExpandTarget = .claude
+    }
+
+    /// 外部终端捕获不再显示 error/warn 时，去掉「点药丸进任务面板」的路由。
+    func clearTerminalPillAbnormalRoutingIfNeeded(currentTone: String) {
+        if pillAbnormalExpandTarget == .tasks, currentTone != "error", currentTone != "warn" {
+            pillAbnormalExpandTarget = nil
+        }
+    }
+
+    func clearPillExpandRouting() {
+        pillAbnormalExpandTarget = nil
+    }
+
+    /// 任务面板中点击异常外部会话：展开（若已收缩）并切到任务面板。
+    func expandToTaskPanel() {
+        expandedPanelMode = .tasks
+        if state == .collapsed {
+            PanelManager.shared.setExpanded()
+            if allApps.isEmpty && !isLoadingApps {
+                scheduleAppsReload()
+            }
+            withAnimation(settings.expandAnimation.animation) {
+                state = .expanded
+                searchText = ""
+            }
+        } else {
+            PanelManager.shared.setExpanded()
+        }
     }
 
     func loadApps() {
@@ -85,6 +132,12 @@ final class IslandViewModel: ObservableObject {
 
     func toggle() {
         if state == .collapsed {
+            // 仅药丸「异常」路由覆盖目标面板；其余情况保留上次停留的面板（如 Claude），
+            // 避免展开时被默认面板替换导致 SwiftUI 卸载 Claude 终端、进程与缓冲丢失。
+            if collapsedPillTone == "error" || collapsedPillTone == "warn",
+               let route = pillAbnormalExpandTarget {
+                expandedPanelMode = route
+            }
             PanelManager.shared.setExpanded()
             // 展开时兜底刷新一次，避免冷启动/重启后首次展开看到空内容。
             if allApps.isEmpty && !isLoadingApps {

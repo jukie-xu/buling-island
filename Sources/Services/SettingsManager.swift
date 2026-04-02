@@ -31,6 +31,7 @@ final class SettingsManager: ObservableObject {
     private let claudeEnableITerm2CaptureKey = "claudeEnableITerm2Capture"
     private let claudeITerm2PollIntervalKey = "claudeITerm2PollInterval"
     private let taskPanelFontSizeKey = "taskPanelFontSize"
+    private let defaultExpandedPanelKey = "defaultExpandedPanel"
 
     @Published var expandAnimation: ExpandAnimation {
         didSet { UserDefaults.standard.set(expandAnimation.rawValue, forKey: expandKey) }
@@ -139,6 +140,11 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(taskPanelFontSize, forKey: taskPanelFontSizeKey) }
     }
 
+    /// 从收缩态点击药丸展开时默认进入的面板（无「异常」路由时）。
+    @Published var defaultExpandedPanel: ExpandedPanelMode {
+        didSet { UserDefaults.standard.set(defaultExpandedPanel.rawValue, forKey: defaultExpandedPanelKey) }
+    }
+
     private init() {
         let expandRaw = UserDefaults.standard.string(forKey: expandKey) ?? ""
         self.expandAnimation = ExpandAnimation(rawValue: expandRaw) ?? .spring
@@ -157,9 +163,9 @@ final class SettingsManager: ObservableObject {
         self.autoHideCollapsedPillInFullscreen = UserDefaults.standard.object(forKey: autoHideCollapsedPillInFullscreenKey) as? Bool ?? false
 
         let leftRaw = UserDefaults.standard.string(forKey: pillLeftSlotKey) ?? ""
-        self.pillLeftSlot = PillSideWidget(rawValue: leftRaw) ?? .none
+        self.pillLeftSlot = PillSideWidget(rawValue: leftRaw) ?? .battery
         let rightRaw = UserDefaults.standard.string(forKey: pillRightSlotKey) ?? ""
-        self.pillRightSlot = PillSideWidget(rawValue: rightRaw) ?? .none
+        self.pillRightSlot = PillSideWidget(rawValue: rightRaw) ?? .networkSpeed
 
         let flareRadius = UserDefaults.standard.object(forKey: pillFlareRadiusKey) as? Double
         self.pillFlareRadius = CGFloat(flareRadius ?? 4)
@@ -183,6 +189,8 @@ final class SettingsManager: ObservableObject {
         self.claudeITerm2PollInterval = max(1, min(5, pollInterval ?? 1.5))
         let taskFontSize = UserDefaults.standard.object(forKey: taskPanelFontSizeKey) as? Double
         self.taskPanelFontSize = max(10, min(16, taskFontSize ?? 12))
+        let defaultPanelRaw = UserDefaults.standard.string(forKey: defaultExpandedPanelKey) ?? ""
+        self.defaultExpandedPanel = ExpandedPanelMode(rawValue: defaultPanelRaw) ?? .appStore
     }
 
     private func savePillColor() {

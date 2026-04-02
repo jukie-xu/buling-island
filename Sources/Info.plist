@@ -28,5 +28,7 @@
     <string>en</string>
     <key>CFBundleAllowMixedLocalizations</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>不灵灵动岛需要向「系统事件」与已支持的终端（如 iTerm2）发送自动化请求，以便在任务面板中读取外部 Claude 会话并跳转到对应窗口。</string>
 </dict>
 </plist>

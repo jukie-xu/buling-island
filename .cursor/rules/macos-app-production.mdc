@@ -1,0 +1,96 @@
+---
+description: macOS 原生应用生产级工程约束（版本、发布、隐私、构建质量），适用于本仓库 Swift/SwiftUI 目标
+alwaysApply: true
+---
+
+# macOS 应用生产级开发约束（Buling Island）
+
+本仓库按**可对外分发、可长期维护**的 macOS 应用标准执行，而非演示或一次性脚本。以下约束与 **Apple 版本模型、SemVer、工程惯例**对齐；修改代码、发版或引入依赖时须遵守。
+
+## 1. 版本与变更记录（与系统一一对应）
+
+1. **`CFBundleShortVersionString`（用户可见版本）**  
+   - 必须遵循 **Semantic Versioning**：`MAJOR.MINOR.PATCH`。  
+   - **MAJOR**：不兼容的行为或移除已承诺的对外能力。  
+   - **MINOR**：向后兼容的功能新增。  
+   - **PATCH**：向后兼容的问题修复。  
+   - 禁止随意跳号；预发布若需要可用内部构建号区分，不在此字符串玩花样。
+
+2. **`CFBundleVersion`（构建号）**  
+   - 必须为**单调递增**的整数（字符串形式亦可，但语义为整数递增）。  
+   - **每次**准备分发或归档的安装包都应递增，与 `CFBundleShortVersionString` 是否变更无关。  
+   - App Store Connect / 公证 / 企业分发均依赖构建号唯一性认知。
+
+3. **`CHANGELOG.md`**  
+   - 任何面向维护者或用户的**有意义行为变化**（功能、修复、破坏性变更、安全）应记入 [Keep a Changelog](https://keepachangelog.com/) 结构。  
+   - **发版时**：新版本节日期、条目与 `CFBundleShortVersionString` 一致；`[Unreleased]` 中已发布内容迁移到对应版本节。  
+   - 禁止仅改 plist 版本而不更新 CHANGELOG（除非纯构建号重发且无行为差异，也应在 CHANGELOG 简短说明）。
+
+4. **`Package.swift` / `LSMinimumSystemVersion`**  
+   - 部署目标与 `Info.plist` 中 `LSMinimumSystemVersion` **保持一致**（当前 macOS 13+）。  
+   - 下调最低系统版本或启用仅新系统 API 时，必须显式 `@available` / 运行时检查，并更新文档与 CHANGELOG。
+
+## 2. 构建、依赖与代码质量
+
+1. **交付前验证**  
+   - 合并或交付用户前，至少通过 **Release 配置**构建（本仓库 `build.sh` / `./install-local.sh` 流程）。  
+   - 不依赖「Debug 能跑」作为完成标准。
+
+2. **依赖管理**  
+   - SwiftPM 依赖应**可复现**：优先固定版本、分支或 revision；避免无约束的漂移依赖上生产默认路径。  
+   - 升级依赖须在 CHANGELOG 中说明**可见影响**（行为、最低系统版本、安全修复）。
+
+3. **Swift 设置**  
+   - 慎用 `unsafeFlags`；新增编译旗标需有明确理由且不影响可发布的默认构建。
+
+4. **资源与配置**  
+   - `Info.plist`、entitlements、资源目录的修改须与**真实运行时行为**一致，避免占位字符串或未使用键长期残留。
+
+## 3. 隐私、权限与合规文案
+
+1. **用途说明（Purpose Strings）**  
+   - 所有 `NS*UsageDescription` 及自动化/辅助功能相关提示，必须**准确描述实际收集或使用方式**，符合 App Store 与审核对诚实表述的要求。
+
+2. **权限最小化**  
+   - 仅申请当前功能所需的 TCC 能力；新增权限须同步 plist 文案、设置界面说明与 CHANGELOG。
+
+3. **敏感数据**  
+   - 用户内容、令牌、路径等：不在日志中默认打印敏感信息；持久化需有明确策略（Keychain、沙盒路径等——若未来启用沙盒须单独评审）。
+
+## 4. 分发形态（公证 / App Store / 直接分发）
+
+1. **签名与加固**  
+   - 面向公网分发时，须启用 **Hardened Runtime** 并完成 **Notarization**（具体 pipeline 以项目脚本为准）；不在此仓库提交私钥或证书。
+
+2. **Entitlements**  
+   - 每项 entitlement 与**实际代码路径**对应；禁止复制模板 entitlements 导致过度授权。
+
+## 5. UI、可访问性与本地化
+
+1. **主线程与 SwiftUI**  
+   - 界面状态更新、AppKit 交互须在主线程；长时间任务异步化并避免阻塞 UI。
+
+2. **可访问性**  
+   - 关键控件应具备合理 `accessibilityLabel` / `accessibilityHint`（尤其自定义控件、分段控件、开关）。
+
+3. **本地化**  
+   - 面向用户的新字符串优先走可本地化资源；避免大量硬编码中文/英文混杂且无结构。
+
+## 6. 本应用特有：菜单栏 / 刘海面板 / 子进程
+
+1. **生命周期**  
+   - `LSUIElement` 类应用须注意窗口、面板、全局监听的注册与注销，避免泄漏或重复监听。
+
+2. **子进程与终端**  
+   - PTY、CLI 子进程的生命周期、退出与错误处理须明确；不可用「忽略错误」替代生产级错误路径。
+
+## 7. 对 AI 协助的底线
+
+1. 默认按**可合并进主分支、可给用户安装**的质量实现，不主动降级为「玩具级」演示。  
+2. 不跳过版本号、CHANGELOG、plist 用途说明等**发版契约**。  
+3. 架构级或行为破坏性变更须与用户确认，并在 SemVer 与 CHANGELOG 中体现。  
+4. 遵守本仓库其他 Cursor 规则（例如修改后的本地安装验证流程）。
+
+---
+
+**摘要**：版本双键（ShortVersion + Build）与 `CHANGELOG.md`、SemVer 同步；构建与依赖可复现；隐私文案与权限真实一致；分发与 entitlements 不越权；UI 与辅助功能不糊弄。以上作为生产级 macOS 项目的默认标准。
