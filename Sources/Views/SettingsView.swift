@@ -639,12 +639,6 @@ struct ClaudeSettingsTab: View {
                 isOn: $settings.claudeHintAutoCollapseEnabled
             )
 
-            toggleRow(
-                title: "启用 iTerm2 会话捕获（实验）",
-                caption: "读取 iTerm2 中运行中的 Claude 会话输出并生成提醒。",
-                isOn: $settings.claudeEnableITerm2Capture
-            )
-
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("自动缩回延迟")
@@ -665,31 +659,6 @@ struct ClaudeSettingsTab: View {
                 )
                 .disabled(!settings.claudeHintAutoCollapseEnabled)
                 Text("默认 3 秒；关闭自动缩回后此项不会生效。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 6)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("iTerm2 轮询间隔")
-                        .font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Text(String(format: "%.1fs", settings.claudeITerm2PollInterval))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(
-                    value: Binding(
-                        get: { settings.claudeITerm2PollInterval },
-                        set: { settings.claudeITerm2PollInterval = min(max($0, 1), 5) }
-                    ),
-                    in: 1...5,
-                    step: 0.5
-                )
-                .disabled(!settings.claudeEnableITerm2Capture)
-                Text("建议 1.5 秒；较高频率会增加系统开销。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -730,6 +699,7 @@ struct TaskSettingsTab: View {
         ScrollView {
             VStack(spacing: 24) {
                 taskTypographyCard
+                externalTerminalCaptureCard
             }
             .padding(20)
         }
@@ -777,6 +747,76 @@ struct TaskSettingsTab: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
         )
+    }
+
+    private var externalTerminalCaptureCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Text("外部终端捕获（实验）")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            taskToggleRow(
+                title: "启用 iTerm2 会话捕获",
+                caption: "用于任务面板：读取 iTerm2/iTerm/系统终端中的 Claude 会话输出并生成会话条与提醒（需自动化权限）。",
+                isOn: $settings.claudeEnableITerm2Capture
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("轮询间隔")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text(String(format: "%.1fs", settings.claudeITerm2PollInterval))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { settings.claudeITerm2PollInterval },
+                        set: { settings.claudeITerm2PollInterval = min(max($0, 1), 5) }
+                    ),
+                    in: 1...5,
+                    step: 0.5
+                )
+                .disabled(!settings.claudeEnableITerm2Capture)
+                Text("建议 1.5 秒；较高频率会增加系统开销。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func taskToggleRow(title: String, caption: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+        .padding(.vertical, 4)
     }
 }
 

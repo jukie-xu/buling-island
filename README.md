@@ -14,7 +14,7 @@ Buling Island turns your MacBook's notch area into a control surface: a quick ap
 
 ## Download / 下载
 
-- **DMG（v1.0.0）**: `https://github.com/jukie-xu/buling-island/blob/main/BulingIsland_v1.0.0.dmg`
+- **DMG（v1.0.0）**: [点击下载](https://github.com/jukie-xu/buling-island/raw/main/BulingIsland_v1.0.0.dmg)
 
 ## Features / 功能
 
