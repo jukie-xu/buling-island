@@ -11,6 +11,7 @@ private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
     case layout = "布局"
     case appearance = "外观"
     case animation = "动画"
+    case about = "关于"
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ private enum SettingsSidebarSection: String, CaseIterable, Identifiable {
         case .layout: return "square.grid.2x2"
         case .appearance: return "paintbrush"
         case .animation: return "sparkles.rectangle.stack"
+        case .about: return "info.circle"
         }
     }
 }
@@ -58,6 +60,8 @@ struct SettingsView: View {
                     LayoutSettingsTab(settings: settings)
                 case .appearance:
                     AppearanceSettingsTab(settings: settings, colorScheme: colorScheme)
+                case .about:
+                    AboutSettingsTab(colorScheme: colorScheme)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,37 +108,76 @@ struct SettingsView: View {
 
             Spacer()
 
-            Button {
-                showQuitConfirm = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "power")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("退出")
-                        .font(.system(size: 13, weight: .semibold))
+            VStack(spacing: 8) {
+                bottomActionButton(
+                    title: "关于",
+                    systemImage: "info.circle",
+                    foreground: Color.accentColor,
+                    background: Color.accentColor.opacity(colorScheme == .dark ? 0.16 : 0.12)
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedSection = .about
+                    }
                 }
-                .foregroundStyle(.red)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.red.opacity(colorScheme == .dark ? 0.16 : 0.12))
-                )
+
+                Button {
+                    showQuitConfirm = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "power")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("退出")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.red.opacity(colorScheme == .dark ? 0.16 : 0.12))
+                    )
+                }
+                .buttonStyle(.plain)
+                .alert("确认退出？", isPresented: $showQuitConfirm) {
+                    Button("取消", role: .cancel) { }
+                    Button("退出", role: .destructive) {
+                        NSApplication.shared.terminate(nil)
+                    }
+                } message: {
+                    Text("你想好了你就退吧。")
+                }
             }
-            .buttonStyle(.plain)
             .padding(.horizontal, 12)
             .padding(.bottom, 14)
-            .alert("确认退出？", isPresented: $showQuitConfirm) {
-                Button("取消", role: .cancel) { }
-                Button("退出", role: .destructive) {
-                    NSApplication.shared.terminate(nil)
-                }
-            } message: {
-                Text("你想好了你就退吧。")
-            }
+
         }
         .frame(width: 200)
         .background(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.99))
+    }
+
+    private func bottomActionButton(
+        title: String,
+        systemImage: String,
+        foreground: Color,
+        background: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundStyle(foreground)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(background)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func sidebarRow(_ section: SettingsSidebarSection) -> some View {
@@ -253,6 +296,308 @@ struct SettingsView: View {
         default:
             Image(systemName: section.icon)
                 .font(.system(size: 14))
+        }
+    }
+}
+
+private struct AboutSettingsTab: View {
+    let colorScheme: ColorScheme
+
+    @State private var copiedToast: String?
+
+    private let githubRepoURL = "https://github.com/jukie-xu/buling-island"
+    private let authorEmail = "jukiexu@icloud.com"
+
+    private var cardBackground: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)
+    }
+
+    private var cardBorder: Color {
+        Color.primary.opacity(0.06)
+    }
+
+    private var appDisplayName: String {
+        let b = Bundle.main
+        if let name = b.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String, !name.isEmpty {
+            return name
+        }
+        if let name = b.object(forInfoDictionaryKey: "CFBundleName") as? String, !name.isEmpty {
+            return name
+        }
+        return "Buling Island"
+    }
+
+    private var shortVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "—"
+    }
+
+    private var buildNumber: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "—"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                brandHeader
+                quickActions
+                appInfoCard
+                authorAndStatementCard
+                openSourceCard
+            }
+            .padding(24)
+        }
+        .overlay(alignment: .top) {
+            if let text = copiedToast {
+                Text(text)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.black.opacity(0.72))
+                    )
+                    .padding(.top, 12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private var brandHeader: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 44, height: 44)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(appDisplayName)
+                    .font(.system(size: 17, weight: .semibold))
+                Text("版本 \(shortVersion)（构建 \(buildNumber)）")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var quickActions: some View {
+        HStack(spacing: 10) {
+            pillActionButton(title: "打开 GitHub", systemImage: "arrow.up.right.square") {
+                openGitHub()
+            }
+            pillActionButton(title: "复制链接", systemImage: "link") {
+                copyToPasteboard(githubRepoURL, toast: "已复制 GitHub 链接")
+            }
+            pillActionButton(title: "去 Star", systemImage: "star") {
+                openGitHub()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var appInfoCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardTitle(icon: "app.badge", title: "应用信息")
+
+            keyValueGrid {
+                gridRow("名称", appDisplayName)
+                gridRow("版本", shortVersion)
+                gridRow("构建", buildNumber)
+                gridRow("系统要求", "macOS 13+ PS:不是M3及以上的MacBook不建议使用哈，不然多出来个刘海也是很尬的...")
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+    }
+
+    private var authorAndStatementCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardTitle(icon: "person.text.rectangle", title: "作者与声明")
+
+            keyValueGrid {
+                gridRow("作者", "jukie-xu")
+                GridRow(alignment: .firstTextBaseline) {
+                    Text("邮箱")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.92))
+                        .gridColumnAlignment(.leading)
+
+                    HStack(spacing: 8) {
+                        Text(authorEmail)
+                            .font(valueFont(style: .monoSmall))
+                            .foregroundStyle(.primary.opacity(0.92))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Button {
+                            copyToPasteboard(authorEmail, toast: "已复制邮箱")
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("复制邮箱")
+                    }
+                    .gridColumnAlignment(.leading)
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("声明")
+                    .font(.system(size: 13, weight: .semibold))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    statementBullet("本人老py & java，对macos的开发一窍不通，纯vibe（cursor + codex），估计bug不少，仅供自娱自乐～")
+                    statementBullet("欢迎提出意见 & 共创：你可以在 GitHub 提交 Issue/PR，或通过邮件联系我。PS：但是邮件我不一定能看到啊。")
+                    statementBullet("本软件按“现状（AS IS）”提供，不提供任何形式的明示或暗示担保。")
+                    statementBullet("若你授予辅助功能/自动化等权限，这些权限仅用于实现对应功能；请在理解权限含义后再授权。")
+                    statementBullet("如用于生产环境或企业分发，请自行完成代码签名、公证与合规审查，并做好数据备份与风险评估。")
+                }
+            }
+            .padding(.top, 6)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+    }
+
+    private var openSourceCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardTitle(icon: "curlybraces", title: "开源与授权")
+
+            keyValueGrid {
+                gridRow("License", "MIT")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("说明")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("本项目采用 MIT License 开源发布。第三方依赖（例如 SwiftTerm）遵循其各自许可证。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+    }
+
+    private func cardTitle(icon: String, title: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+
+    private enum ValueStyle {
+        case normal
+        case monoSmall
+        case monoMiddleTruncate
+    }
+
+    private func keyValueGrid(@ViewBuilder rows: () -> some View) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+            rows()
+        }
+    }
+
+    private func gridRow(_ key: String, _ value: String, valueStyle: ValueStyle = .normal) -> some View {
+        GridRow(alignment: .firstTextBaseline) {
+            Text(key)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary.opacity(0.92))
+                .gridColumnAlignment(.leading)
+
+            Text(value)
+                .font(valueFont(style: valueStyle))
+                .foregroundStyle(.primary.opacity(0.92))
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(valueStyle == .monoMiddleTruncate ? .middle : .tail)
+                .gridColumnAlignment(.leading)
+        }
+    }
+
+    private func valueFont(style: ValueStyle) -> Font {
+        switch style {
+        case .normal:
+            return .system(size: 13)
+        case .monoSmall, .monoMiddleTruncate:
+            return .system(size: 12, weight: .medium, design: .monospaced)
+        }
+    }
+
+    private func pillActionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
+            )
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+
+    private func statementBullet(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle()
+                .fill(Color.secondary.opacity(0.7))
+                .frame(width: 4, height: 4)
+                .padding(.top, 6)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func openGitHub() {
+        guard let url = URL(string: githubRepoURL) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func copyToPasteboard(_ value: String, toast: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(value, forType: .string)
+
+        withAnimation(.easeInOut(duration: 0.16)) {
+            copiedToast = toast
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                if copiedToast == toast {
+                    copiedToast = nil
+                }
+            }
         }
     }
 }
