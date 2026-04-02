@@ -38,12 +38,15 @@ final class ClaudeCLIService: ObservableObject {
             let env = ProcessInfo.processInfo.environment
             let fm = FileManager.default
             let explicit = env["CLAUDE_CLI_PATH"]
+            let home = fm.homeDirectoryForCurrentUser.path
 
-            // GUI App 进程的 PATH 常常缺少 Homebrew 路径，优先做一轮常见位置硬检测。
+            // GUI App 进程的 PATH 常常缺少 Homebrew ~/.local/bin 等路径；环境变量 CLAUDE_CLI_PATH 可显式指定。
             let pathCandidates: [String] = [
                 explicit,
                 "/opt/homebrew/bin/claude",
                 "/usr/local/bin/claude",
+                "\(home)/.local/bin/claude",
+                "\(home)/bin/claude",
                 "/usr/bin/claude",
             ].compactMap { $0 }
 

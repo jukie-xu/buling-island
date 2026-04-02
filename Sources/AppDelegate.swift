@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 @MainActor
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         TaskStrategyBootstrap.installProjectStrategies()
+        requestLaunchTimePermissions()
 
         let contentView = IslandView(viewModel: islandViewModel)
         PanelManager.shared.createPanel(with: contentView) { [weak self] in
@@ -30,6 +32,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         PanelManager.shared.syncInteractionState(viewModel: islandViewModel)
         fullscreenAutoHider = FullscreenCollapsedPillAutoHider(viewModel: islandViewModel)
+    }
+
+    /// 启动阶段主动触发系统权限向导（无替代「已授权」；CLI 检测不依赖 TCC，但刘海点击/外部终端捕获依赖）。
+    private func requestLaunchTimePermissions() {
+        if !AXIsProcessTrusted() {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
+
+        // 稍迟再发 Apple Event，避免与辅助功能弹窗抢焦点；仅在用户已开启外部终端捕获时需要。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            guard SettingsManager.shared.claudeEnableITerm2Capture else { return }
+            TerminalAutomationAccessProber.requestPromptsAtApplicationLaunch()
+        }
     }
 }
 

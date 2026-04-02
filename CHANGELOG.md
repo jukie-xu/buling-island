@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - 任务面板：宿主已连通但当前没有可展示的会话时同样显示上述灰色占位，避免出现纯黑空白区域。
 - 外部终端捕获（设置开启时）：应用启动后即开始轮询，不再依赖「先切到任务面板才启动监控」。
 - 应用面板：应用目录扫描结果变化时递增 `appCatalogRevision` 并用于面板视图标识，首扫完成后更易触发界面刷新。
+- 启动时：若未授予辅助权限则触发系统提示；在「启用外部终端捕获」时延迟发起一轮 Apple Event 探测以促发自动化授权；面板出现后即刻检测 Claude CLI。
+- Claude CLI：检测路径补充 `~/.local/bin`、`~/bin`，仍支持环境变量 `CLAUDE_CLI_PATH`。
 
 ## [1.0.0] - 2026-04-02
 

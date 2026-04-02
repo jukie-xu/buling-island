@@ -102,6 +102,7 @@ struct IslandView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            claudeCLI.ensureDetected()
             loadTaskPanelSortStateIfNeeded()
             viewModel.syncCollapsedPillTone(claudePillStatusTone)
             if viewModel.state == .collapsed {

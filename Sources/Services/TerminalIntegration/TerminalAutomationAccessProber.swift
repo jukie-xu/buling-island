@@ -9,6 +9,16 @@ enum TerminalAutomationAccessProber {
     /// 避免在模式切换动画间重复触发多次 osascript。
     private static let throttleInterval: TimeInterval = 8
 
+    /// 应用冷启动时调用一次（无节流），促使系统依次弹出「自动化 / 控制其他 App」授权向导。
+    static func requestPromptsAtApplicationLaunch() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            probeSystemEvents()
+            for kind in TerminalKind.allCases {
+                probeTerminal(kind: kind)
+            }
+        }
+    }
+
     /// 在后台队列执行，不阻塞 UI。
     static func requestPromptsForSupportedTerminalHosts() {
         let now = ProcessInfo.processInfo.systemUptime
