@@ -41,6 +41,8 @@ final class IslandViewModel: ObservableObject {
     @Published var allApps: [AppInfo] = []
     @Published var isHovering: Bool = false
     @Published private(set) var isLoadingApps: Bool = false
+    /// 应用目录扫描结果每次变化时递增，供应用面板 `.id` 强制刷新，避免首扫完成后偶现不重绘。
+    @Published private(set) var appCatalogRevision: UInt64 = 0
     /// 当前展开面板顶栏选中的模式（应用 / Claude / 任务）。
     @Published var expandedPanelMode: ExpandedPanelMode
     /// 收缩态药丸底部提示为 error/warn 时，点击药丸应优先打开的面板（外部终端异常 → 任务；内嵌 Claude 异常 → Claude）。
@@ -124,12 +126,26 @@ final class IslandViewModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoadingApps = false
+                let signatureBefore = Self.appListIdentitySignature(self.allApps)
                 // 启动早期会偶发目录索引未就绪：优先保留更完整的列表，避免“首次打开缺失/空白”。
                 if self.allApps.isEmpty || apps.count >= self.allApps.count {
                     self.allApps = apps
                 }
+                let signatureAfter = Self.appListIdentitySignature(self.allApps)
+                if signatureBefore != signatureAfter {
+                    self.appCatalogRevision &+= 1
+                }
             }
         }
+    }
+
+    private static func appListIdentitySignature(_ apps: [AppInfo]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(apps.count)
+        for id in apps.map(\.id).sorted() {
+            hasher.combine(id)
+        }
+        return hasher.finalize()
     }
 
     func toggle() {

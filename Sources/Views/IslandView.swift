@@ -207,9 +207,10 @@ struct IslandView: View {
             }
         }
         .onChange(of: viewModel.expandedPanelMode) { mode in
+            // 终端轮询是否在跑仅由设置项决定；切换标签仍同步间隔/状态并刷新任务快照。
+            syncTerminalCaptureConfig()
+            refreshTaskSnapshots()
             if mode == .tasks {
-                syncTerminalCaptureConfig()
-                refreshTaskSnapshots()
                 TerminalAutomationAccessProber.requestPromptsForSupportedTerminalHosts()
             }
         }
@@ -681,6 +682,7 @@ struct IslandView: View {
                             folderManager: FolderManager.shared,
                             isLaunchpadEditing: $isLaunchpadEditing
                         )
+                        .id(viewModel.appCatalogRevision)
                     case .claude:
                         Color.clear
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1031,62 +1033,89 @@ struct IslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var claudeTaskBoardSection: some View {
-        ScrollView {
-            ZStack(alignment: .topLeading) {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(taskGroups, id: \.id) { group in
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack {
-                                Text(group.name)
-                                    .font(.system(size: taskFontBase, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.88))
-                                Spacer()
-                                Text("\(group.tasks.count) 个任务")
-                                    .font(.system(size: max(9, taskFontBase - 2)))
-                                    .foregroundStyle(.white.opacity(0.58))
-                            }
+    /// 无任何可渲染的终端会话时显示占位文案（避免整页纯黑）。
+    private var shouldShowTaskPanelEmptyPlaceholder: Bool {
+        if !terminalCapture.isTerminalHostReachable { return true }
+        return taskGroups.isEmpty
+    }
 
-                            if group.tasks.isEmpty {
-                                Text("暂无捕获任务")
-                                    .font(.system(size: max(10, taskFontBase - 1)))
-                                    .foregroundStyle(.white.opacity(0.42))
-                                    .padding(.vertical, 6)
-                            } else {
-                                ForEach(group.tasks, id: \.session.id) { item in
-                                    taskBoardRowView(item: item, in: group)
+    private var claudeTaskBoardSection: some View {
+        Group {
+            if !shouldShowTaskPanelEmptyPlaceholder {
+                ScrollView {
+                    ZStack(alignment: .topLeading) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(taskGroups, id: \.id) { group in
+                                VStack(alignment: .leading, spacing: 7) {
+                                    HStack {
+                                        Text(group.name)
+                                            .font(.system(size: taskFontBase, weight: .semibold))
+                                            .foregroundStyle(.white.opacity(0.88))
+                                        Spacer()
+                                        Text("\(group.tasks.count) 个任务")
+                                            .font(.system(size: max(9, taskFontBase - 2)))
+                                            .foregroundStyle(.white.opacity(0.58))
+                                    }
+
+                                    if group.tasks.isEmpty {
+                                        Text("暂无捕获任务")
+                                            .font(.system(size: max(10, taskFontBase - 1)))
+                                            .foregroundStyle(.white.opacity(0.42))
+                                            .padding(.vertical, 6)
+                                    } else {
+                                        ForEach(group.tasks, id: \.session.id) { item in
+                                            taskBoardRowView(item: item, in: group)
+                                        }
+                                    }
                                 }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 9)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(Color.white.opacity(0.04))
+                                )
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.white.opacity(0.04))
-                        )
+                        .padding(.top, 2)
+
+                        if let draggingID = taskPanelDraggingSessionID,
+                           let preview = taskBoardRowLookup(sessionID: draggingID),
+                           let frame = taskPanelRowFrames[draggingID] {
+                            taskBoardRowView(item: preview.item, in: preview.group, isFloatingPreview: true)
+                                .frame(width: frame.width)
+                                .position(
+                                    x: taskPanelDragStartLocation.x + taskPanelDragOffset.width,
+                                    y: taskPanelDragStartLocation.y + taskPanelDragOffset.height
+                                )
+                                .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 8)
+                                .allowsHitTesting(false)
+                                .zIndex(20)
+                        }
+                    }
+                    .coordinateSpace(name: "task-board-list")
+                    .onPreferenceChange(TaskBoardRowFramePreferenceKey.self) { frames in
+                        taskPanelRowFrames = frames
                     }
                 }
-                .padding(.top, 2)
-
-                if let draggingID = taskPanelDraggingSessionID,
-                   let preview = taskBoardRowLookup(sessionID: draggingID),
-                   let frame = taskPanelRowFrames[draggingID] {
-                    taskBoardRowView(item: preview.item, in: preview.group, isFloatingPreview: true)
-                        .frame(width: frame.width)
-                        .position(
-                            x: taskPanelDragStartLocation.x + taskPanelDragOffset.width,
-                            y: taskPanelDragStartLocation.y + taskPanelDragOffset.height
-                        )
-                        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 8)
-                        .allowsHitTesting(false)
-                        .zIndex(20)
+            } else {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Text(taskPanelEmptyPlaceholderText)
+                        .font(.system(size: max(12, taskFontBase)))
+                        .foregroundStyle(Color.white.opacity(0.42))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel(taskPanelEmptyPlaceholderText)
+                    Spacer(minLength: 0)
                 }
-            }
-            .coordinateSpace(name: "task-board-list")
-            .onPreferenceChange(TaskBoardRowFramePreferenceKey.self) { frames in
-                taskPanelRowFrames = frames
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var taskPanelEmptyPlaceholderText: String {
+        "未检测到活动中的终端"
     }
 
     private struct TaskBoardRow: Hashable {
@@ -1723,7 +1752,8 @@ struct IslandView: View {
     }
 
     private func syncTerminalCaptureConfig() {
-        let shouldEnableCapture = settings.claudeEnableITerm2Capture || viewModel.expandedPanelMode == .tasks
+        // 与「当前是否停在任务面板」无关：设置开启后应用启动即轮询（IslandView.onAppear 已会调用本方法）。
+        let shouldEnableCapture = settings.claudeEnableITerm2Capture
         let effectivePollInterval: Double = {
             if viewModel.state == .expanded {
                 // 展开态提升刷新频率，让任务输出更接近实时滚动更新。
