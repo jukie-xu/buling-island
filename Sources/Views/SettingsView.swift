@@ -284,7 +284,7 @@ struct ClaudeSettingsTab: View {
 
             toggleRow(
                 title: "展示下拉伸提醒文案",
-                caption: "在收缩态 pill 底部显示 Claude 的成功/警告/错误提醒。",
+                caption: "在收缩态灵动岛底部显示 Claude 的成功/警告/错误提醒。",
                 isOn: $settings.claudeStretchHintEnabled
             )
 
@@ -484,8 +484,8 @@ private struct SettingsDashboardTab: View {
 
             VStack(spacing: 0) {
                 dashboardToggleRow(
-                    title: "全屏时隐藏胶囊",
-                    caption: "前台全屏时自动隐藏收缩态胶囊",
+                    title: "全屏时隐藏灵动岛",
+                    caption: "前台全屏时自动隐藏收缩态灵动岛",
                     isOn: $settings.autoHideCollapsedPillInFullscreen
                 )
                 dashboardRowDivider
@@ -519,7 +519,8 @@ private struct SettingsDashboardTab: View {
     }
 
     private var dashboardDefaultExpandedPanelRow: some View {
-        HStack(alignment: .center, spacing: 14) {
+        let trailingControlWidth: CGFloat = 220
+        return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("默认展开面板")
                     .font(.system(size: 13, weight: .medium))
@@ -536,7 +537,7 @@ private struct SettingsDashboardTab: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 220)
+            .frame(width: trailingControlWidth, alignment: .trailing)
             .accessibilityHint("在应用、Claude 与任务三种展开面板间选择默认项")
         }
         .padding(.vertical, 10)
@@ -567,7 +568,8 @@ private struct SettingsDashboardTab: View {
     }
 
     private func dashboardToggleRow(title: String, caption: String, isOn: Binding<Bool>) -> some View {
-        HStack(alignment: .center, spacing: 14) {
+        let trailingControlWidth: CGFloat = 220
+        return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
@@ -581,6 +583,7 @@ private struct SettingsDashboardTab: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .toggleStyle(.switch)
+                .frame(width: trailingControlWidth, alignment: .trailing)
         }
         .padding(.vertical, 8)
     }
@@ -588,12 +591,11 @@ private struct SettingsDashboardTab: View {
     private var dashboardAccessibilityAuthorizationSection: some View {
         let statusText = accessibilityGranted ? "已授权" : "未授权"
         let statusColor: Color = accessibilityGranted ? .green : .orange
-        let primaryTitle = accessibilityGranted ? "已授权" : "去授权…"
+        let primaryTitle = accessibilityGranted ? "已授权" : "去授权"
         let primaryEnabled = !accessibilityGranted
-        let primaryBackground = accessibilityGranted
-            ? Color.primary.opacity(0.10)
-            : Color.accentColor.opacity(colorScheme == .dark ? 0.22 : 0.16)
-        let primaryForeground: Color = accessibilityGranted ? .secondary : .accentColor
+        // 未授权：用系统强调色（与图 2 的蓝色一致）；已授权：禁用态走灰色按钮。
+        let primaryBackground = accessibilityGranted ? Self.settingsButtonFill : Color.accentColor
+        let primaryForeground: Color = accessibilityGranted ? .white.opacity(0.86) : .white
         let cardStroke: Color = accessibilityGranted
             ? Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06)
             : Color.orange.opacity(0.34)
@@ -621,13 +623,10 @@ private struct SettingsDashboardTab: View {
                         .foregroundStyle(primaryForeground)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(primaryBackground)
-                        )
                 }
                 .buttonStyle(.plain)
                 .disabled(!primaryEnabled)
+                .settingsCapsuleButtonSkin(fill: primaryBackground)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -777,7 +776,7 @@ private struct SettingsDashboardTab: View {
                 )
                 roadmapRow(
                     "左 / 右自选信息位",
-                    "对应多类系统信息胶囊（网速、农历、日期、时钟、电量等），依赖系统接口与布局框架。"
+                    "对应多类系统信息灵动岛（网速、农历、日期、时钟、电量等），依赖系统接口与布局框架。"
                 )
                 roadmapRow(
                     "展开态小组件",
@@ -815,6 +814,21 @@ private struct SettingsDashboardTab: View {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    // MARK: - Button skin (match Task Mute capsule)
+
+    private static let settingsButtonFill = Color.white.opacity(0.07)
+}
+
+private extension View {
+    /// Match the Task panel "Mute" capsule style for settings buttons.
+    func settingsCapsuleButtonSkin(fill: Color = Color.white.opacity(0.07)) -> some View {
+        padding(.horizontal, 0) // keep caller in control
+            .background(
+                Capsule(style: .continuous)
+                    .fill(fill)
+            )
     }
 }
 
@@ -1103,7 +1117,7 @@ struct LayoutSettingsTab: View {
                 Spacer()
             }
 
-            Text("在 pill 左右两侧扩展区域展示系统电量与网速（约每秒刷新）。网速通过 netstat 统计网卡累计字节差分，无电池机型将不显示电量。")
+            Text("在灵动岛左右两侧扩展区域展示系统电量与网速（约每秒刷新）。网速通过 netstat 统计网卡累计字节差分，无电池机型将不显示电量。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

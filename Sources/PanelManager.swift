@@ -32,6 +32,9 @@ final class PanelManager {
     private var clickMonitor: Any?
     private var pillClickMonitor: Any?
     private var pillRect: NSRect = .zero
+    /// Extra height appended below the notch area for the collapsed pill hit-rect
+    /// (e.g. Claude bottom hint expansion). This must stay in sync with `IslandView`.
+    private var collapsedPillExtraHeight: CGFloat = 0
     private var onPillClick: (() -> Void)?
     private var visibilityObserverTokens: [NSObjectProtocol] = []
     private var pendingBringFrontTasks: [DispatchWorkItem] = []
@@ -225,6 +228,7 @@ final class PanelManager {
     @MainActor
     func syncIslandPanelLayout(notch: NotchInfo, pillTotalWidth: CGFloat, extraHeight: CGFloat = 0) {
         updatePanelFrame(notch: notch)
+        collapsedPillExtraHeight = extraHeight
         setCollapsedPillRect(notch: notch, width: pillTotalWidth, extraHeight: extraHeight)
     }
 
@@ -276,7 +280,9 @@ final class PanelManager {
                 left: s.pillLeftSlot,
                 right: s.pillRightSlot
             )
-            setCollapsedPillRect(notch: notch, width: w, extraHeight: 0)
+            // Keep the hit rect in sync with `IslandView` collapsed layout:
+            // `IslandView` may append a bottom hint strip (extra height) that is still clickable.
+            setCollapsedPillRect(notch: notch, width: w, extraHeight: collapsedPillExtraHeight)
         }
     }
 

@@ -24,7 +24,7 @@
 - `IslandView` 同时处理：
   - Claude 面板生命周期
   - Task 面板状态渲染
-  - pill 提示/闪烁/路由
+  - 灵动岛提示/闪烁/路由
   - Panel 交互同步
 - 风险：改一个能力易影响其它能力，回归面大。
 
@@ -90,7 +90,7 @@
 
 ## 4.2 中可行（需阶段性改造）
 
-1. 把 `IslandView` 的 pill/claude/task 协调逻辑迁到 `IslandCoordinator`。
+1. 把 `IslandView` 的灵动岛/claude/task 协调逻辑迁到 `IslandCoordinator`。
 2. `PanelManager` 拆分：
    - `PanelWindowHost`
    - `PanelInteractionMonitor`

@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - 刘海区域展开面板：应用启动器（搜索、多种网格模式、文件夹与 Launchpad 式整理）。
 - Claude 面板：内嵌终端（SwiftTerm）、Claude Code CLI 工作区与会话状态；可选 iTerm2 等外部终端捕获（实验性）。
-- 任务面板、动画与外观设置、收缩态信息位、全屏时隐藏 pill、登录项（Launch at Login）等系统集成功能。
+- 任务面板、动画与外观设置、收缩态信息位、全屏时隐藏灵动岛、登录项（Launch at Login）等系统集成功能。
 
 <!-- 后续版本在此上方追加 ## [x.y.z] - YYYY-MM-DD -->
 

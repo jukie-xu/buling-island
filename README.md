@@ -24,8 +24,8 @@ Buling Island turns your MacBook's notch area into a control surface: a quick ap
 - **动画自定义 / Custom Animations** — 可选展开与收起动画（弹性 / 快速 / 柔和等预设）
 - **外观设置 / Appearance** — 自定义药丸边框颜色，支持跟随系统主题
 - **收缩态信息位 / Collapsed Pill Widgets** — 左右槽位可选电量、实时网速等（设置中配置）
-- **全屏时隐藏 pill / Fullscreen Hide** — 可在全屏且为浏览器、播放器等场景时自动隐藏收缩态 pill（可开关）
-- **Claude Code / 内嵌终端** — 选择工作区后启动本机 `claude` CLI（SwiftTerm 渲染），状态可反映在 pill 底部提醒区
+- **全屏时隐藏灵动岛 / Fullscreen Hide** — 可在全屏且为浏览器、播放器等场景时自动隐藏收缩态灵动岛（可开关）
+- **Claude Code / 内嵌终端** — 选择工作区后启动本机 `claude` CLI（SwiftTerm 渲染），状态可反映在灵动岛底部提醒区
 - **外部终端捕获（实验） / External Terminal Capture (Experimental)** — 可选轮询 **iTerm2**、经典 **iTerm**、系统 **终端 (Terminal.app)** 等已接入后端的会话缓冲，用于提醒与会话条（需在设置中开启并为「系统事件」与各终端勾选自动化）
 - **开机自启 / Launch at Login** — 支持 macOS 原生自启动
 - **本地化名称 / Localized Names** — 应用名称自动跟随系统语言
@@ -125,7 +125,7 @@ open /Applications/BulingIsland.app
     │   ├── NetworkThroughputReader # 网速读取
     │   └── FullscreenCollapsedPillAutoHider
     └── Views/
-        ├── IslandView              # 主视图（pill 形态与展开内容）
+        ├── IslandView              # 主视图（灵动岛形态与展开内容）
         ├── LaunchpadGridView       # Launchpad 网格
         ├── AlphabetGridView        # 字母分组
         ├── AppGridView / AppItemView
@@ -155,7 +155,7 @@ open /Applications/BulingIsland.app
 
 1. App 启动：`AppDelegate` 创建 `IslandViewModel` 与 `PanelManager`。  
 2. 状态刷新：`IslandViewModel` 扫描应用 + 文件夹监听，更新 `allApps`。  
-3. UI 响应：`IslandView` 订阅设置、CLI、终端捕获状态，驱动 pill 与面板。  
+3. UI 响应：`IslandView` 订阅设置、CLI、终端捕获状态，驱动灵动岛与面板。  
 4. 系统行为：`PanelManager` 同步窗口层级、点击监听、收缩热区。  
 5. 持久化：`SettingsManager`（UserDefaults）与 `FolderManager`（Application Support JSON）。
 
