@@ -1,15 +1,20 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="BulingIsland"
-VERSION=$(defaults read "$SCRIPT_DIR/Sources/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "1.0.0")
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SCRIPT_DIR/Sources/Info.plist" 2>/dev/null || echo "1.0.0")"
 DMG_NAME="${APP_NAME}_v${VERSION}.dmg"
 DMG_DIR="$SCRIPT_DIR/dist"
 DMG_PATH="$DMG_DIR/$DMG_NAME"
 STAGING_DIR="$SCRIPT_DIR/.dmg-staging"
+
+cleanup() {
+  rm -rf "$STAGING_DIR" || true
+}
+trap cleanup EXIT
 
 # ── Step 1: Build app bundle ──
 echo "==> Building $APP_NAME (release)..."
@@ -26,7 +31,8 @@ echo "==> Preparing DMG contents..."
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
 
-cp -a "$APP_BUNDLE" "$STAGING_DIR/"
+# 以 `install-local.sh` 的复制语义为准：不使用 `cp -a`（可能携带不一致的 metadata / xattrs）。
+cp -R "$APP_BUNDLE" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
 # ── Step 3: Create DMG ──
