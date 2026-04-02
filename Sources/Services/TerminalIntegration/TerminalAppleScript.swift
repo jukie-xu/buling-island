@@ -60,8 +60,8 @@ enum TerminalAppleScript {
         if output.isEmpty {
             return []
         }
-        let recordSeparator = Character(UnicodeScalar(30)!)
-        let fieldSeparator = String(Character(UnicodeScalar(31)!))
+        let recordSeparator = Character("\u{001E}")
+        let fieldSeparator = String(Character("\u{001F}"))
         return output
             .split(separator: recordSeparator)
             .map { String($0) }

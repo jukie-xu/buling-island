@@ -33,5 +33,10 @@ let package = Package(
                 .linkedFramework("IOKit"),
             ]
         ),
+        .testTarget(
+            name: "BulingIslandTests",
+            dependencies: ["BulingIsland"],
+            path: "Tests/BulingIslandTests"
+        ),
     ]
 )

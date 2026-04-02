@@ -78,19 +78,18 @@ final class LegacyITermSessionCaptureBackend: TerminalSessionCaptureBackend, @un
         end tell
         tell application "iTerm"
             activate
-            repeat with w in windows
-                repeat with t in tabs of w
-                    repeat with s in sessions of t
-                        try
-                            if (unique id of s as text) is targetID then
-                                select s
-                                select t
-                                return "__OK__"
-                            end if
-                        end try
-                    end repeat
-                end repeat
-            end repeat
+            try
+                set matches to (every session of every tab of every window whose unique id is targetID)
+                if (count of matches) is 0 then return "__SESSION_NOT_FOUND__"
+                set s to item 1 of matches
+                select s
+                try
+                    select (parent of s)
+                end try
+                return "__OK__"
+            on error
+                return "__SESSION_NOT_FOUND__"
+            end try
         end tell
         return "__SESSION_NOT_FOUND__"
         """

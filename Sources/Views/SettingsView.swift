@@ -444,7 +444,6 @@ private struct SettingsDashboardTab: View {
 
     @State private var launchAtLogin: Bool = false
     @State private var accessibilityGranted: Bool = false
-    @State private var showAccessibilityDisableHint = false
     private let accessibilityPoller = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -472,28 +471,21 @@ private struct SettingsDashboardTab: View {
 
 
     private var globalTogglesCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("全局开关")
-                .sectionTitle()
+        VStack(alignment: .leading, spacing: 14) {
+            generalQuickTogglesCard
+            permissionsCard
+        }
+    }
 
-            defaultExpandedPanelControl
+    private var generalQuickTogglesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("常规")
+                .sectionTitle()
 
             VStack(spacing: 0) {
                 dashboardToggleRow(
-                    title: "点击展开",
-                    caption: "点击刘海区域展开面板",
-                    isOn: $settings.clickToExpand
-                )
-                dashboardRowDivider
-                dashboardToggleRow(
-                    title: "开启灵动岛",
-                    caption: "显示顶部刘海启动面板",
-                    isOn: $settings.islandEnabled
-                )
-                dashboardRowDivider
-                dashboardToggleRow(
-                    title: "全屏时隐藏 pill",
-                    caption: "前台全屏时自动隐藏收缩态药丸",
+                    title: "全屏时隐藏胶囊",
+                    caption: "前台全屏时自动隐藏收缩态胶囊",
                     isOn: $settings.autoHideCollapsedPillInFullscreen
                 )
                 dashboardRowDivider
@@ -509,10 +501,10 @@ private struct SettingsDashboardTab: View {
                     )
                 )
                 dashboardRowDivider
-                dashboardAccessibilityRow
+                dashboardDefaultExpandedPanelRow
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color.black.opacity(0.028))
@@ -524,25 +516,41 @@ private struct SettingsDashboardTab: View {
         }
         .padding(18)
         .cardStyle(colorScheme: colorScheme)
-        .alert("需要在系统设置撤销", isPresented: $showAccessibilityDisableHint) {
-            Button("知道了", role: .cancel) { }
-        } message: {
-            Text("辅助功能权限只能在系统设置中关闭：系统设置 → 隐私与安全性 → 辅助功能。")
-        }
     }
 
-    private var defaultExpandedPanelControl: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("默认展开面板")
-                .font(.system(size: 13, weight: .medium))
+    private var dashboardDefaultExpandedPanelRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("默认展开面板")
+                    .font(.system(size: 13, weight: .medium))
+                Text("从收缩态点击展开时，优先进入的面板。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
             Picker("默认展开面板", selection: $settings.defaultExpandedPanel) {
                 ForEach(ExpandedPanelMode.allCases) { mode in
                     Text(expandedPanelSegmentLabel(mode)).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 220)
             .accessibilityHint("在应用、Claude 与任务三种展开面板间选择默认项")
         }
+        .padding(.vertical, 10)
+    }
+
+    private var permissionsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("权限")
+                .sectionTitle()
+
+            dashboardAccessibilityAuthorizationSection
+        }
+        .padding(18)
+        .cardStyle(colorScheme: colorScheme)
     }
 
     private func expandedPanelSegmentLabel(_ mode: ExpandedPanelMode) -> String {
@@ -555,7 +563,7 @@ private struct SettingsDashboardTab: View {
 
     private var dashboardRowDivider: some View {
         Divider()
-            .opacity(colorScheme == .dark ? 0.22 : 0.35)
+            .opacity(colorScheme == .dark ? 0.18 : 0.30)
     }
 
     private func dashboardToggleRow(title: String, caption: String, isOn: Binding<Bool>) -> some View {
@@ -572,42 +580,77 @@ private struct SettingsDashboardTab: View {
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .controlSize(.small)
+                .toggleStyle(.switch)
         }
-        .padding(.vertical, 11)
+        .padding(.vertical, 8)
     }
 
-    private var dashboardAccessibilityRow: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("辅助功能")
-                    .font(.system(size: 13, weight: .medium))
-                Text("全局鼠标：点击刘海、点击外部收起")
-                    .font(.system(size: 11))
+    private var dashboardAccessibilityAuthorizationSection: some View {
+        let statusText = accessibilityGranted ? "已授权" : "未授权"
+        let statusColor: Color = accessibilityGranted ? .green : .orange
+        let primaryTitle = accessibilityGranted ? "已授权" : "去授权…"
+        let primaryEnabled = !accessibilityGranted
+        let primaryBackground = accessibilityGranted
+            ? Color.primary.opacity(0.10)
+            : Color.accentColor.opacity(colorScheme == .dark ? 0.22 : 0.16)
+        let primaryForeground: Color = accessibilityGranted ? .secondary : .accentColor
+        let cardStroke: Color = accessibilityGranted
+            ? Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06)
+            : Color.orange.opacity(0.34)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Text("辅助功能授权")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(statusText)
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(statusColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(statusColor.opacity(0.18))
+                    )
+                Spacer(minLength: 10)
+
+                Button {
+                    requestAccessibility()
+                } label: {
+                    Text(primaryTitle)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(primaryForeground)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(primaryBackground)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!primaryEnabled)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("用于点击唤醒/收起、外部点击收起等全局交互能力。")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(accessibilityGranted ? .secondary : statusColor.opacity(0.95))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("我们不会读取键盘内容或收集输入，只用于交互判断。")
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 12)
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { accessibilityGranted },
-                    set: { newValue in
-                        if newValue {
-                            if !accessibilityGranted {
-                                requestAccessibility()
-                            }
-                        } else {
-                            if accessibilityGranted {
-                                showAccessibilityDisableHint = true
-                            }
-                        }
-                    }
-                )
-            )
-            .labelsHidden()
-            .controlSize(.small)
         }
-        .padding(.vertical, 11)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color.black.opacity(0.028))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(cardStroke, lineWidth: 1)
+        )
     }
 
     private func toggleLaunchAtLogin(_ enable: Bool) {
@@ -765,6 +808,10 @@ private struct SettingsDashboardTab: View {
     private func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
+        openAccessibilitySystemSettings()
+    }
+
+    private func openAccessibilitySystemSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }

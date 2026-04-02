@@ -8,6 +8,7 @@ struct IslandView: View {
     @StateObject private var pillHud = PillHudViewModel()
     @StateObject private var claudeCLI = ClaudeCLIService()
     @StateObject private var terminalCapture = TerminalCaptureService()
+    @StateObject private var taskSessionEngine = TaskSessionEngine()
     @State private var isLaunchpadEditing = false
     @State private var claudeInteractionHint: String?
     @State private var claudePillStatusText: String?
@@ -96,6 +97,7 @@ struct IslandView: View {
             }
             refreshClaudeBottomHintAutoCollapse()
             syncTerminalCaptureConfig()
+            refreshTaskSnapshots()
             if !taskBreathPhase {
                 withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
                     taskBreathPhase = true
@@ -194,22 +196,33 @@ struct IslandView: View {
         .onChange(of: viewModel.expandedPanelMode) { mode in
             if mode == .tasks {
                 syncTerminalCaptureConfig()
+                refreshTaskSnapshots()
                 TerminalAutomationAccessProber.requestPromptsForSupportedTerminalHosts()
             }
         }
+        .onChange(of: terminalCapture.sessions) { _ in
+            refreshTaskSnapshots()
+        }
+        .onChange(of: terminalCapture.activeSessionIDs) { _ in
+            refreshTaskSnapshots()
+        }
         .onChange(of: terminalCapture.statusRevision) { _ in
+            refreshTaskSnapshots()
             if let text = terminalCapture.latestStatusText, !text.isEmpty {
                 let tone = terminalCapture.latestStatusTone
                 if tone == "warn" || tone == "error" || tone == "success" {
                     if let tail = terminalCapture.latestStatusSourceTail, !tail.isEmpty {
                         if tone == "error" {
-                            let extracted = lastErrorText(from: tail)
+                            let extracted = TaskSessionTextToolkit.lastErrorText(from: tail)
                             if isPillIssueSuppressed(text: extracted, tone: tone) {
                                 return
                             }
                             claudePillStatusText = extracted
                         } else {
-                            let extracted = lastQuestionText(from: tail)
+                            let compact = TaskSessionTextToolkit.compactTailText(tail)
+                            let extracted = compact.isEmpty
+                                ? text
+                                : TaskSessionTextToolkit.truncate(compact, max: 88)
                             if isPillIssueSuppressed(text: extracted, tone: tone) {
                                 return
                             }
@@ -633,66 +646,33 @@ struct IslandView: View {
             }
 
             ZStack(alignment: .topLeading) {
-                if claudeSessionHostShouldPersist {
-                    claudePanelView
-                        .opacity(claudePanelLayerInteractive ? 1 : 0)
-                        .allowsHitTesting(claudePanelLayerInteractive)
+                if claudeSessionHostShouldPersist || viewModel.expandedPanelMode == .claude {
+                    ClaudePanelFeatureView(
+                        shouldPersistSessionHost: claudeSessionHostShouldPersist,
+                        isLayerInteractive: claudePanelLayerInteractive,
+                        panelContent: AnyView(claudePanelView)
+                    )
                 }
 
                 Group {
                     switch viewModel.expandedPanelMode {
                     case .appStore:
-                        // ZStack 内多个子视图会叠在同一位置，必须用 VStack 保持搜索栏在上、网格在下。
-                        VStack(alignment: .leading, spacing: 0) {
-                            SearchBarView(text: $viewModel.searchText)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 8)
-                                .padding(.bottom, 10)
-                                .onTapGesture {
-                                    exitLaunchpadEditMode()
-                                }
-
-                            if !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                                AppGridView(
-                                    apps: viewModel.filteredApps,
-                                    onAppTap: { app in viewModel.launchApp(app) }
-                                )
-                            } else {
-                                switch settings.displayMode {
-                                case .grid:
-                                    AppGridView(
-                                        apps: viewModel.filteredApps,
-                                        onAppTap: { app in viewModel.launchApp(app) }
-                                    )
-                                case .alphabetical:
-                                    AlphabetGridView(
-                                        apps: viewModel.filteredApps,
-                                        onAppTap: { app in viewModel.launchApp(app) }
-                                    )
-                                case .launchpad:
-                                    LaunchpadGridView(
-                                        allApps: viewModel.allApps,
-                                        onAppTap: { app in viewModel.launchApp(app) },
-                                        folderManager: FolderManager.shared,
-                                        isEditing: $isLaunchpadEditing
-                                    )
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        AppPanelFeatureView(
+                            searchText: $viewModel.searchText,
+                            filteredApps: viewModel.filteredApps,
+                            allApps: viewModel.allApps,
+                            displayMode: settings.displayMode,
+                            onAppTap: { app in viewModel.launchApp(app) },
+                            onExitEditMode: { exitLaunchpadEditMode() },
+                            folderManager: FolderManager.shared,
+                            isLaunchpadEditing: $isLaunchpadEditing
+                        )
                     case .claude:
-                        if claudeSessionHostShouldPersist {
-                            Color.clear
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .allowsHitTesting(false)
-                        } else {
-                            claudePanelView
-                        }
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
                     case .tasks:
-                        claudeTaskBoardSection
-                            .padding(.horizontal, 18)
-                            .padding(.top, 10)
-                            .padding(.bottom, 14)
+                        TaskPanelFeatureView(content: AnyView(claudeTaskBoardSection))
                     }
                 }
             }
@@ -1058,15 +1038,16 @@ struct IslandView: View {
                                 .foregroundStyle(.white.opacity(0.42))
                                 .padding(.vertical, 6)
                         } else {
-                            ForEach(group.tasks, id: \.id) { task in
-                                let visual = taskVisualMeta(for: task)
+                            ForEach(group.tasks, id: \.session.id) { item in
+                                let task = item.session
+                                let snap = item.snapshot
                                 let isMuted = terminalCapture.isSessionMuted(task.id)
                                 VStack(alignment: .leading, spacing: 7) {
                                     HStack(alignment: .center, spacing: 8) {
                                         Circle()
-                                            .fill(visual.color)
+                                            .fill(taskIndicatorColor(tone: snap.renderTone))
                                             .frame(width: 9, height: 9)
-                                            .shadow(color: visual.color.opacity(0.55), radius: visual.isRunning ? 4 : 1, x: 0, y: 0)
+                                            .shadow(color: taskIndicatorColor(tone: snap.renderTone).opacity(0.55), radius: snap.isRunning ? 4 : 1, x: 0, y: 0)
                                             .opacity(taskBreathPhase ? 1 : 0.7)
                                             .scaleEffect(taskBreathPhase ? 1 : 0.84)
 
@@ -1109,13 +1090,15 @@ struct IslandView: View {
                                         )
                                     }
 
-                                    Text(taskSecondaryText(for: task, visual: visual))
+                                    Text(snap.secondaryText)
                                         .font(.system(size: taskFontBase, weight: .medium))
-                                        .foregroundStyle(.white.opacity(isMuted ? 0.68 : (visual.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
+                                        .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
                                         .lineLimit(2)
                                         .truncationMode(.tail)
 
                                     HStack(spacing: 6) {
+                                        Text(snap.strategyDisplayName)
+                                        Text("·")
                                         Text(task.terminalKind.rawValue)
                                         Text("·")
                                         Text(task.tty.isEmpty ? "tty 未知" : task.tty)
@@ -1129,15 +1112,15 @@ struct IslandView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(taskRowBackgroundColor(visual: visual, isMuted: isMuted))
+                                        .fill(taskRowBackgroundColor(tone: snap.renderTone, isMuted: isMuted))
                                         .overlay {
-                                            if visual.isRunning {
+                                            if snap.isRunning {
                                                 taskRunningWaveOverlay(isMuted: isMuted)
                                             }
                                         }
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .strokeBorder(taskRowBorderColor(visual: visual, isMuted: isMuted), lineWidth: 1)
+                                                .strokeBorder(taskRowBorderColor(tone: snap.renderTone, isMuted: isMuted), lineWidth: 1)
                                         )
                                 )
                                 .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -1160,7 +1143,16 @@ struct IslandView: View {
         }
     }
 
-    private var taskGroups: [(name: String, tasks: [CapturedTerminalSession])] {
+    private struct TaskBoardRow: Hashable {
+        let session: CapturedTerminalSession
+        let snapshot: TaskSessionSnapshot
+    }
+
+    private var taskGroups: [(name: String, tasks: [TaskBoardRow])] {
+        let rows: [TaskBoardRow] = terminalCapture.sessions.compactMap { session in
+            guard let snap = taskSessionEngine.snapshotsBySessionID[session.id] else { return nil }
+            return TaskBoardRow(session: session, snapshot: snap)
+        }
         let captured = Dictionary(grouping: terminalCapture.sessions) { session in
             let app = session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if app.isEmpty {
@@ -1168,12 +1160,25 @@ struct IslandView: View {
             }
             return app
         }
+        let rowsByGroup = Dictionary(grouping: rows) { $0.session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "iTerm" : $0.session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines) }
         let orderedNames = ["iTerm", "Terminal"]
-        var result: [(name: String, tasks: [CapturedTerminalSession])] = []
+        var result: [(name: String, tasks: [TaskBoardRow])] = []
         for name in orderedNames {
-            result.append((name: name, tasks: captured[name] ?? []))
+            let tasks = (rowsByGroup[name] ?? []).sorted { lhs, rhs in
+                if lhs.snapshot.lifecycle == rhs.snapshot.lifecycle {
+                    return lhs.session.title.localizedStandardCompare(rhs.session.title) == .orderedAscending
+                }
+                return taskLifecycleRank(lhs.snapshot.lifecycle) > taskLifecycleRank(rhs.snapshot.lifecycle)
+            }
+            result.append((name: name, tasks: tasks))
         }
-        for (name, tasks) in captured where !orderedNames.contains(name) {
+        for (name, _) in captured where !orderedNames.contains(name) {
+            let tasks = (rowsByGroup[name] ?? []).sorted { lhs, rhs in
+                if lhs.snapshot.lifecycle == rhs.snapshot.lifecycle {
+                    return lhs.session.title.localizedStandardCompare(rhs.session.title) == .orderedAscending
+                }
+                return taskLifecycleRank(lhs.snapshot.lifecycle) > taskLifecycleRank(rhs.snapshot.lifecycle)
+            }
             result.append((name: name, tasks: tasks))
         }
         return result
@@ -1384,6 +1389,7 @@ struct IslandView: View {
             enabled: shouldEnableCapture,
             pollInterval: effectivePollInterval
         )
+        refreshTaskSnapshots()
     }
 
     private func clearPillAlertsAfterOpen() {
@@ -1403,111 +1409,63 @@ struct IslandView: View {
         stopClaudeRightSlotFlash()
     }
 
+    private func refreshTaskSnapshots() {
+        taskSessionEngine.refresh(
+            sessions: terminalCapture.sessions,
+            activeSessionIDs: terminalCapture.activeSessionIDs
+        )
+    }
+
     private func jumpToExternalTask(session: CapturedTerminalSession) {
         terminalCapture.acknowledgeCurrentIssue(for: session)
         terminalCapture.activate(session: session)
-        let visual = taskVisualMeta(for: session)
-        if visual.kind == .error {
-            viewModel.expandToTaskPanel()
-            return
-        }
-        if viewModel.state == .expanded {
-            viewModel.toggle()
-        }
-        PanelManager.shared.setCollapsed()
+        viewModel.collapse()
     }
 
-    private enum TaskStatusKind {
-        case idle
-        case inactiveNoClaude
-        case running
-        case success
-        case error
+    private func taskLifecycleRank(_ state: TaskLifecycleState) -> Int {
+        switch state {
+        case .error: return 6
+        case .waitingInput: return 5
+        case .running: return 4
+        case .success: return 3
+        case .idle: return 2
+        case .inactiveTool: return 1
+        }
     }
 
-    private func taskVisualMeta(for session: CapturedTerminalSession) -> (color: Color, isRunning: Bool, kind: TaskStatusKind) {
-        let lines = normalizedTaskOutputLines(from: session.tailOutput)
-        let compact = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = compact.lowercased()
-        let seemsClaudeSession = looksLikeClaudeSession(session)
-        if !seemsClaudeSession {
-            return (Color.gray.opacity(0.85), false, .inactiveNoClaude)
+    private func taskIndicatorColor(tone: TaskRenderTone) -> Color {
+        switch tone {
+        case .error:
+            return Color.red.opacity(0.92)
+        case .warning:
+            return Color.orange.opacity(0.95)
+        case .running:
+            return Color.green.opacity(0.95)
+        case .success:
+            return Color.green.opacity(0.95)
+        case .inactive:
+            return Color.gray.opacity(0.85)
+        case .neutral:
+            return Color.green.opacity(0.95)
         }
-        if compact.isEmpty {
-            return (Color.green.opacity(0.95), false, .idle)
-        }
-        if lower.contains("error") || lower.contains("failed") || lower.contains("exception")
-            || lower.contains("auth_error") || lower.contains("unauthorized") || lower.contains("401")
-            || lower.contains("timeout") || lower.contains("timed out")
-            || lower.contains("报错") || lower.contains("失败") || lower.contains("错误") || lower.contains("超时") {
-            return (Color.red.opacity(0.92), false, .error)
-        }
-        if terminalCapture.activeSessionIDs.contains(session.id) {
-            return (Color.green.opacity(0.95), true, .running)
-        }
-        if lower.contains("done") || lower.contains("completed") || lower.contains("finished")
-            || lower.contains("success") || lower.contains("已完成") || lower.contains("成功") || lower.contains("完成") {
-            return (Color.green.opacity(0.95), false, .success)
-        }
-        if lower.contains("allow") || lower.contains("approve") || lower.contains("confirm")
-            || lower.contains("[y/n]") || lower.contains("(y/n)")
-            || lower.contains("请确认") || lower.contains("请选择") || lower.contains("是否允许")
-            || lower.contains("running") || lower.contains("executing") || lower.contains("processing")
-            || lower.contains("thinking") || lower.contains("analyzing")
-            || lower.contains("处理中") || lower.contains("执行中") || lower.contains("思考中") {
-            return (Color.green.opacity(0.95), true, .running)
-        }
-        return (Color.green.opacity(0.95), false, .idle)
-    }
-
-    private func looksLikeClaudeSession(_ session: CapturedTerminalSession) -> Bool {
-        let titleLower = session.title.lowercased()
-        let tailLower = session.tailOutput.lowercased()
-        let claudeMarkers = [
-            "claude",
-            "claude code",
-            "what should claude do",
-            "billowing",
-            "sonnet",
-            "ask claude",
-            "esc to interrupt"
-        ]
-        if titleLower.contains("claude") {
-            return true
-        }
-        return claudeMarkers.contains(where: { tailLower.contains($0) })
-    }
-
-    private func taskSecondaryText(
-        for session: CapturedTerminalSession,
-        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind)
-    ) -> String {
-        if visual.kind == .idle {
-            return "当前未运行任务"
-        }
-        if visual.kind == .inactiveNoClaude {
-            return "当前会话未启动 claude"
-        }
-        if visual.kind == .error {
-            return taskPromptAndErrorTextTwoLines(from: session.tailOutput)
-        }
-        return taskPromptAndReplyTextTwoLines(from: session.tailOutput)
     }
 
     private func taskRowBackgroundColor(
-        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind),
+        tone: TaskRenderTone,
         isMuted: Bool
     ) -> Color {
         let base: Color = {
-            switch visual.kind {
-            case .idle:
+            switch tone {
+            case .neutral:
                 return Color.green.opacity(0.14)
-            case .inactiveNoClaude:
+            case .inactive:
                 return Color.gray.opacity(0.14)
             case .running:
                 return Color.green.opacity(0.16)
             case .success:
                 return Color.green.opacity(0.14)
+            case .warning:
+                return Color.orange.opacity(0.14)
             case .error:
                 return Color.red.opacity(0.16)
             }
@@ -1517,202 +1475,27 @@ struct IslandView: View {
     }
 
     private func taskRowBorderColor(
-        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind),
+        tone: TaskRenderTone,
         isMuted: Bool
     ) -> Color {
         let base: Color = {
-            switch visual.kind {
-            case .idle:
+            switch tone {
+            case .neutral:
                 return Color.green.opacity(0.30)
-            case .inactiveNoClaude:
+            case .inactive:
                 return Color.gray.opacity(0.28)
             case .running:
                 return Color.green.opacity(0.34)
             case .success:
                 return Color.green.opacity(0.30)
+            case .warning:
+                return Color.orange.opacity(0.34)
             case .error:
                 return Color.red.opacity(0.34)
             }
         }()
         if isMuted { return base.opacity(0.45) }
         return base
-    }
-
-    private func lastQuestionText(from tail: String) -> String {
-        let lines = normalizedTaskOutputLines(from: tail)
-        for line in lines.reversed() {
-            if line.hasSuffix("?") || line.contains("？") {
-                return line
-            }
-            if line.hasPrefix(">") {
-                return line
-            }
-        }
-        if let last = lines.last {
-            if last.count > 88 { return String(last.prefix(88)) + "…" }
-            return last
-        }
-        return "暂无可展示输出"
-    }
-
-    private func taskPromptAndReplyTextTwoLines(from tail: String) -> String {
-        let displayLines = normalizedTaskDisplayLines(from: tail)
-        let latestPrompt = extractLatestUserPrompt(from: tail)
-        let latestReply = displayLines.reversed().first(where: { !isUserInputCommandLine($0) })
-
-        if let prompt = latestPrompt, let reply = latestReply {
-            return "\(truncateLine(prompt, max: 30))\n\(truncateLine(reply, max: 88))"
-        }
-        if let reply = latestReply {
-            return "（未识别到提问）\n\(truncateLine(reply, max: 88))"
-        }
-        return lastQuestionText(from: tail)
-    }
-
-    private func taskPromptAndErrorTextTwoLines(from tail: String) -> String {
-        let latestPrompt = extractLatestUserPrompt(from: tail)
-        let errorText = lastErrorText(from: tail)
-
-        if let prompt = latestPrompt {
-            return "\(truncateLine(prompt, max: 30))\n\(truncateLine(errorText, max: 88))"
-        }
-        return "（未识别到提问）\n\(truncateLine(errorText, max: 88))"
-    }
-
-    private func lastErrorText(from tail: String) -> String {
-        let lines = normalizedTaskOutputLines(from: tail)
-
-        let markers = ["error", "failed", "exception", "unauthorized", "auth_error", "401", "timeout", "报错", "失败", "错误", "超时"]
-        for line in lines.reversed() {
-            let lower = line.lowercased()
-            if markers.contains(where: { lower.contains($0) }) {
-                if line.count > 88 { return String(line.prefix(88)) + "…" }
-                return line
-            }
-        }
-        if let last = lines.last {
-            if last.count > 88 { return String(last.prefix(88)) + "…" }
-            return last
-        }
-        return "检测到异常"
-    }
-
-    private func isBannedClaudePromptLine(_ line: String) -> Bool {
-        _ = line
-        return false
-    }
-
-    private func isTaskNoiseLine(_ line: String) -> Bool {
-        let lower = line.lowercased()
-        let noiseMarkers = [
-            "esc to interrupt",
-            "image in clipboard",
-            "ctrl+v to paste",
-            "for shortcuts",
-            "update available",
-            "run: brew upgrade claude-code",
-            "claude code (",
-            "claude code v",
-            "sonnet",
-            "api usage",
-            "recent activity",
-            "tips for getting started",
-            "welcome back"
-        ]
-        if noiseMarkers.contains(where: { lower.contains($0) }) {
-            return true
-        }
-        // 纯装饰线/分隔线等无业务含义文本。
-        let stripped = lower.replacingOccurrences(of: " ", with: "")
-        if stripped.allSatisfy({ "-_=|·•:".contains($0) }) {
-            return true
-        }
-        return false
-    }
-
-    private func isClaudeInputAreaLine(_ line: String) -> Bool {
-        let lower = line.lowercased()
-        let inputMarkers = [
-            "send message",
-            "shift+enter",
-            "press enter",
-            "type a message",
-            "ask claude",
-            "esc to interrupt"
-        ]
-        if inputMarkers.contains(where: { lower.contains($0) }) {
-            return true
-        }
-
-        // Claude TUI 输入区/边框字符（常见于底部双输入框并排）。
-        if line.contains("╭") || line.contains("╰")
-            || line.contains("┌") || line.contains("└")
-            || line.contains("│") || line.contains("┃")
-            || line.contains("┆") || line.contains("─") {
-            return true
-        }
-
-        // 纯占位输入前缀："> "、":" 等
-        if line == ":" || line == ">" || line.hasPrefix("> ") {
-            return true
-        }
-        return false
-    }
-
-    private func isUserInputCommandLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("❯") || trimmed.hasPrefix("›") || trimmed.hasPrefix("»") || trimmed.hasPrefix(">") {
-            return true
-        }
-        return false
-    }
-
-    private func extractLatestUserPrompt(from tail: String) -> String? {
-        let lines = tail
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        for line in lines.reversed() {
-            guard isUserInputCommandLine(line) else { continue }
-            var prompt = line
-                .replacingOccurrences(of: "^[❯›»>]\\s*", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if prompt.isEmpty { continue }
-            if isTaskNoiseLine(prompt) || isClaudeInputAreaLine(prompt) { continue }
-            // 避免把 Claude 的输出占位句误当“用户输入内容”
-            if prompt.lowercased().contains("what should claude do") { continue }
-            if prompt.count > 120 {
-                prompt = String(prompt.prefix(120))
-            }
-            return prompt
-        }
-        return nil
-    }
-
-    private func normalizedTaskOutputLines(from tail: String) -> [String] {
-        tail
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .filter { !isUserInputCommandLine($0) }
-            .filter { !isBannedClaudePromptLine($0) }
-            .filter { !isTaskNoiseLine($0) }
-            .filter { !isClaudeInputAreaLine($0) }
-    }
-
-    private func normalizedTaskDisplayLines(from tail: String) -> [String] {
-        tail
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .filter { !isTaskNoiseLine($0) }
-            .filter { !isClaudeInputAreaLine($0) }
-    }
-
-    private func truncateLine(_ text: String, max: Int) -> String {
-        if text.count <= max { return text }
-        return String(text.prefix(max)) + "…"
     }
 
     @ViewBuilder

@@ -20,7 +20,7 @@ enum PillLayout {
 
     /// Content inset measured from the notch vertical edge (inner edge between wing and core).
     /// This keeps battery/network text stable even if wing widths change.
-    static var contentInsetFromNotchEdge: CGFloat { 6 }
+    static var contentInsetFromNotchEdge: CGFloat { 3 }
 
     /// 左侧或右侧只要挂了电量/网速任一模块，两翼占位宽度**相同且固定**，避免左右不对称、随类型浮动。
     static var sideSlotFixedWidth: CGFloat { SettingsManager.shared.pillSideSlotWidth }

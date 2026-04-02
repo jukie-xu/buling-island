@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        TaskStrategyBootstrap.installProjectStrategies()
+
         let contentView = IslandView(viewModel: islandViewModel)
         PanelManager.shared.createPanel(with: contentView) { [weak self] in
             self?.islandViewModel.toggle()

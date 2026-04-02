@@ -58,10 +58,11 @@ final class FolderManager: ObservableObject {
            let decoded = try? JSONDecoder().decode([LaunchpadItem].self, from: data) {
             layout = decoded
         }
-        if normalizeFolderAppLists() {
+        let sanitized = FolderLayoutEngine.sanitizeLoadedState(folders: folders, layout: layout)
+        folders = sanitized.folders
+        layout = sanitized.layout
+        if sanitized.changed {
             saveFolders()
-        }
-        if dedupeTopLevelAppEntries() {
             saveLayout()
         }
     }
@@ -86,108 +87,24 @@ final class FolderManager: ObservableObject {
         // Treating that as "all apps uninstalled" would wipe Launchpad layout.
         guard !apps.isEmpty else { return }
 
-        let currentAppIDs = Set(apps.map { $0.id })
-        var changed = false
-
-        // Self-heal: remove stale folder slots whose folder payload is missing/corrupted.
-        let beforeInvalidFolderCleanup = layout.count
-        layout.removeAll { item in
-            if case .folder(let uuid) = item, folder(for: uuid) == nil {
-                return true
-            }
-            return false
-        }
-        if layout.count != beforeInvalidFolderCleanup {
-            changed = true
-        }
-
         if layout.isEmpty {
             layout = apps.map { .app($0.id) }
             saveLayout()
             return
         }
 
-        // Collect all app IDs already present in layout or folders
-        var knownAppIDs = Set<String>()
-        for item in layout {
-            switch item {
-            case .app(let id): knownAppIDs.insert(id)
-            case .folder(let uuid):
-                if let folder = folder(for: uuid) {
-                    knownAppIDs.formUnion(folder.appIDs)
-                }
-            }
-        }
+        let sync = FolderLayoutEngine.syncInstalledApps(
+            orderedInstalledAppIDs: apps.map(\.id),
+            folders: folders,
+            layout: layout
+        )
+        folders = sync.folders
+        layout = sync.layout
 
-        // Add newly installed apps to the end of layout
-        for app in apps where !knownAppIDs.contains(app.id) {
-            layout.append(.app(app.id))
-            changed = true
-        }
-
-        // Remove uninstalled apps from layout
-        let beforeCount = layout.count
-        layout.removeAll { item in
-            if case .app(let id) = item, !currentAppIDs.contains(id) { return true }
-            return false
-        }
-        if layout.count != beforeCount { changed = true }
-
-        // Remove uninstalled apps from folders, dissolve folders with < 2 apps
-        for i in (0..<folders.count).reversed() {
-            let before = folders[i].appIDs.count
-            folders[i].appIDs.removeAll { !currentAppIDs.contains($0) }
-            if folders[i].appIDs.count != before { changed = true }
-
-            if folders[i].appIDs.count < 2 {
-                let remaining = folders[i].appIDs
-                let folderID = folders[i].id
-                if let layoutIdx = layout.firstIndex(of: .folder(folderID)) {
-                    layout.remove(at: layoutIdx)
-                    for (offset, id) in remaining.enumerated() {
-                        layout.insert(.app(id), at: layoutIdx + offset)
-                    }
-                }
-                folders.remove(at: i)
-                changed = true
-            }
-        }
-
-        if changed {
+        if sync.changed {
             saveFolders()
             saveLayout()
         }
-
-        if dedupeTopLevelAppEntries() {
-            saveLayout()
-        }
-    }
-
-    /// 同一 bundle 在顶层只能占一格；历史数据或旧版拖拽 bug 可能产生重复 `.app(id)`。
-    @discardableResult
-    private func dedupeTopLevelAppEntries() -> Bool {
-        var seen = Set<String>()
-        let before = layout.count
-        layout.removeAll { item in
-            if case .app(let id) = item {
-                if seen.contains(id) { return true }
-                seen.insert(id)
-            }
-            return false
-        }
-        return layout.count != before
-    }
-
-    @discardableResult
-    private func normalizeFolderAppLists() -> Bool {
-        var changed = false
-        for i in folders.indices {
-            var seen = Set<String>()
-            let before = folders[i].appIDs.count
-            folders[i].appIDs = folders[i].appIDs.filter { seen.insert($0).inserted }
-            if folders[i].appIDs.count != before { changed = true }
-        }
-        return changed
     }
 
     // MARK: - Folder CRUD

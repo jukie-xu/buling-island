@@ -7,7 +7,7 @@ import CoreGraphics
 final class FullscreenCollapsedPillAutoHider {
 
     private weak var viewModel: IslandViewModel?
-    private var tokens: [NSObjectProtocol] = []
+    private var observerTokens: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var timer: Timer?
 
     private var lastHidden: Bool = false
@@ -55,7 +55,7 @@ final class FullscreenCollapsedPillAutoHider {
                     self?.evaluateSoon()
                 }
             }
-            tokens.append(t)
+            observerTokens.append((center: c, token: t))
         }
 
         observe(center, NSApplication.didBecomeActiveNotification)
@@ -75,8 +75,10 @@ final class FullscreenCollapsedPillAutoHider {
     func stop() {
         timer?.invalidate()
         timer = nil
-        tokens.forEach { NotificationCenter.default.removeObserver($0) }
-        tokens.removeAll()
+        observerTokens.forEach { pair in
+            pair.center.removeObserver(pair.token)
+        }
+        observerTokens.removeAll()
     }
 
     private func evaluateSoon() {
@@ -173,4 +175,3 @@ final class FullscreenCollapsedPillAutoHider {
         return bestCoverage >= 0.92
     }
 }
-
