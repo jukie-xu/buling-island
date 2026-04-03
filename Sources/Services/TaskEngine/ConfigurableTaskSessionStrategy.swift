@@ -23,11 +23,15 @@ struct ConfigurableTaskSessionStrategy: TaskSessionStrategy {
     }
 
     func supports(session: CapturedTerminalSession) -> Bool {
-        supportsRule.matches(title: session.title, tail: session.tailOutput)
+        supportsRule.matches(
+            title: session.title,
+            tail: TaskSessionTextToolkit.analysisCompactTailText(session.standardizedTailOutput, maxTailLines: 40)
+        )
     }
 
     func analyze(session: CapturedTerminalSession) -> TaskSessionRawAnalysis {
-        let compact = TaskSessionTextToolkit.compactTailText(session.tailOutput)
+        let normalizedTail = session.standardizedTailOutput
+        let compact = TaskSessionTextToolkit.analysisCompactTailText(normalizedTail)
         let lower = compact.lowercased()
 
         if compact.isEmpty {
@@ -46,15 +50,21 @@ struct ConfigurableTaskSessionStrategy: TaskSessionStrategy {
             return defaultLifecycle
         }()
 
+        let interactionPrompt = lifecycle == .waitingInput
+            ? TaskSessionTextToolkit.extractInteractionPrompt(from: normalizedTail)
+            : nil
+
         return TaskSessionRawAnalysis(
             lifecycle: lifecycle,
             renderTone: toneForLifecycle(lifecycle),
             secondaryText: extraction.extract(
                 lifecycle: lifecycle,
-                tail: session.tailOutput,
+                tail: normalizedTail,
                 compact: compact
             ),
-            interactionOptions: lifecycle == .waitingInput ? TaskSessionTextToolkit.interactionOptions(from: session.tailOutput) : []
+            interactionOptions: interactionPrompt?.options
+                ?? (lifecycle == .waitingInput ? TaskSessionTextToolkit.interactionOptions(from: normalizedTail) : []),
+            interactionPrompt: interactionPrompt
         )
     }
 
@@ -191,26 +201,46 @@ struct TaskStrategyExtractionRule: Codable {
 }
 
 enum TaskStrategyFileLoader {
+    /// 合并各 JSON；同 `strategyID` 以后出现的文件覆盖先前（用户目录在 `allCandidateFiles` 中位于内置之后）。
     static func loadConfiguredStrategies() -> [any TaskSessionStrategy] {
+        configurationsByStrategyID().values
+            .sorted { lhs, rhs in
+                if lhs.priority != rhs.priority { return lhs.priority > rhs.priority }
+                return lhs.strategyID < rhs.strategyID
+            }
+            .map { ConfigurableTaskSessionStrategy(config: $0) as any TaskSessionStrategy }
+    }
+
+    static func configurableStrategy(strategyID: String) -> ConfigurableTaskSessionStrategy? {
+        configurationsByStrategyID()[strategyID].map { ConfigurableTaskSessionStrategy(config: $0) }
+    }
+
+    static func invalidateBundledStrategyCaches() {
+        mergeLock.lock()
+        mergedConfigurationsCache = nil
+        mergeLock.unlock()
+    }
+
+    private static let mergeLock = NSLock()
+    private static var mergedConfigurationsCache: [String: TaskStrategyFileConfig]?
+
+    private static func configurationsByStrategyID() -> [String: TaskStrategyFileConfig] {
+        mergeLock.lock()
+        defer { mergeLock.unlock() }
+        if let mergedConfigurationsCache { return mergedConfigurationsCache }
+
         let urls = allCandidateFiles()
-        guard !urls.isEmpty else { return [] }
-
+        var byId: [String: TaskStrategyFileConfig] = [:]
         let decoder = JSONDecoder()
-        var parsed: [TaskStrategyFileConfig] = []
-        parsed.reserveCapacity(urls.count)
-
         for url in urls {
             guard let data = try? Data(contentsOf: url),
                   let config = try? decoder.decode(TaskStrategyFileConfig.self, from: data) else {
                 continue
             }
-            parsed.append(config)
+            byId[config.strategyID] = config
         }
-
-        var seen = Set<String>()
-        return parsed
-            .filter { seen.insert($0.strategyID).inserted }
-            .map { ConfigurableTaskSessionStrategy(config: $0) as any TaskSessionStrategy }
+        mergedConfigurationsCache = byId
+        return byId
     }
 
     private static func allCandidateFiles() -> [URL] {

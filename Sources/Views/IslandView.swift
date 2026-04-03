@@ -37,6 +37,7 @@ struct IslandView: View {
     @State private var taskPanelDragOffset: CGSize = .zero
     @State private var taskPanelDropTargetSessionID: String?
     @State private var taskPanelDropInsertAfter: Bool = false
+    @State private var taskInteractionSelections: [String: Set<String>] = [:]
 
     private var fillColor: Color {
         .primary
@@ -219,15 +220,29 @@ struct IslandView: View {
             refreshTaskSnapshots()
             reconcileTaskPanelSortStateWithLiveSessions()
         }
-        .onChange(of: terminalCapture.activeSessionIDs) { _ in
-            refreshTaskSnapshots()
-        }
         .onChange(of: terminalCapture.statusRevision) { _ in
-            refreshTaskSnapshots()
+            let latestSourceMuted: Bool = {
+                guard let sessionID = terminalCapture.latestStatusSourceSessionID else { return false }
+                return terminalCapture.isSessionMuted(sessionID)
+            }()
+            if latestSourceMuted {
+                claudePillStatusText = nil
+                claudePillStatusTone = "info"
+                claudeInteractionHint = nil
+                viewModel.clearTerminalPillAbnormalRoutingIfNeeded(currentTone: "info")
+                claudeStatusRevision &+= 1
+                refreshClaudeBottomHintAutoCollapse()
+                return
+            }
             if let text = terminalCapture.latestStatusText, !text.isEmpty {
                 let tone = terminalCapture.latestStatusTone
                 if tone == "warn" || tone == "error" || tone == "success" {
-                    if let tail = terminalCapture.latestStatusSourceTail, !tail.isEmpty {
+                    if tone == "warn" {
+                        if isPillIssueSuppressed(text: text, tone: tone) {
+                            return
+                        }
+                        claudePillStatusText = text
+                    } else if let tail = terminalCapture.latestStatusSourceTail, !tail.isEmpty {
                         if tone == "error" {
                             let extracted = TaskSessionTextToolkit.lastErrorText(from: tail)
                             if isPillIssueSuppressed(text: extracted, tone: tone) {
@@ -1299,38 +1314,26 @@ struct IslandView: View {
                 )
             }
 
-            Text(snap.secondaryText)
-                .font(.system(size: taskFontBase, weight: .medium))
-                .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
-                .lineLimit(2)
-                .truncationMode(.tail)
-
-            if snap.lifecycle == .waitingInput, !snap.interactionOptions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(snap.interactionOptions.prefix(4)), id: \.id) { opt in
-                            Button {
-                                triggerTaskInteractionOption(session: task, option: opt)
-                            } label: {
-                                Text(opt.label)
-                                    .font(.system(size: max(9, taskFontBase - 1), weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.92))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.plain)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Color.orange.opacity(0.24))
-                                    .overlay(
-                                        Capsule(style: .continuous)
-                                            .strokeBorder(Color.orange.opacity(0.55), lineWidth: 1)
-                                    )
-                            )
-                        }
-                    }
+            if snap.lifecycle == .waitingInput {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("您的任务需要手工确认。")
+                        .font(.system(size: max(9, taskFontBase - 1), weight: .semibold))
+                        .foregroundStyle(.orange.opacity(0.96))
+                    Text(snap.detailText ?? snap.secondaryText)
+                        .font(.system(size: max(8, taskFontBase - 2), weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(isMuted ? 0.7 : 0.82))
+                        .lineLimit(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("请点击任务前往终端处理。")
+                        .font(.system(size: max(8, taskFontBase - 3), weight: .medium))
+                        .foregroundStyle(.white.opacity(0.58))
                 }
+            } else {
+                Text(snap.secondaryText)
+                    .font(.system(size: taskFontBase, weight: .medium))
+                    .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
             }
 
             HStack(spacing: 6) {
@@ -1824,10 +1827,7 @@ struct IslandView: View {
     }
 
     private func refreshTaskSnapshots() {
-        taskSessionEngine.refresh(
-            sessions: terminalCapture.sessions,
-            activeSessionIDs: terminalCapture.activeSessionIDs
-        )
+        taskSessionEngine.refresh(sessions: terminalCapture.sessions)
     }
 
     private func jumpToExternalTask(session: CapturedTerminalSession) {
@@ -1836,15 +1836,55 @@ struct IslandView: View {
         viewModel.collapse()
     }
 
+    private func handleTaskInteractionSelection(
+        session: CapturedTerminalSession,
+        prompt: TaskInteractionPrompt,
+        option: TaskInteractionOption
+    ) {
+        if option.kind != .choice {
+            triggerTaskInteractionOption(session: session, option: option)
+            return
+        }
+        switch prompt.selectionMode {
+        case .single:
+            triggerTaskInteractionOption(session: session, option: option)
+        case .multiple:
+            terminalCapture.acknowledgeCurrentIssue(for: session)
+            _ = terminalCapture.sendInput(to: session, text: option.input, submit: false)
+            var selected = taskInteractionSelections[session.id] ?? []
+            if selected.contains(option.id) {
+                selected.remove(option.id)
+            } else {
+                selected.insert(option.id)
+            }
+            taskInteractionSelections[session.id] = selected
+        case .freeform:
+            terminalCapture.acknowledgeCurrentIssue(for: session)
+            terminalCapture.activate(session: session)
+        }
+    }
+
     private func triggerTaskInteractionOption(session: CapturedTerminalSession, option: TaskInteractionOption) {
         terminalCapture.acknowledgeCurrentIssue(for: session)
-        let ok = terminalCapture.sendInput(
-            to: session,
-            text: option.input,
-            submit: option.submit
-        )
+        if option.kind == .activate {
+            terminalCapture.activate(session: session)
+            return
+        }
+        let ok: Bool
+        if !option.actions.isEmpty {
+            ok = terminalCapture.sendActions(to: session, actions: option.actions)
+        } else {
+            ok = terminalCapture.sendInput(
+                to: session,
+                text: option.input,
+                submit: option.submit
+            )
+        }
         if !ok {
             terminalCapture.activate(session: session)
+        }
+        if option.kind == .confirm || option.submit {
+            taskInteractionSelections[session.id] = []
         }
     }
 

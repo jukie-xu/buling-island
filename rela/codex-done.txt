@@ -1,0 +1,1038 @@
+• Ran cat > docs/2026-04-02-task-engine-plugin-strategy-design.md <<'EOF'
+  │ # BulingIsland 设计文档：Task 引擎 + 可插拔策略（Claude/Codex）
+  │
+  │ … +119 lines
+  └ (no output)
+
+• Explored
+  └ Read 2026-04-02-task-engine-plugin-strategy-design.md
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 设计文档已完成。我现在开始实现引擎与策略模块（TaskSessionEngine + StateMachine + Claude/Codex/Generic），然后把 Task 面板
+  改为消费引擎快照。
+
+• Added Sources/Services/TaskEngine/TaskSessionTypes.swift (+44 -0)
+     1 +import Foundation
+     2 +
+     3 +enum TaskLifecycleState: String, Codable, Hashable {
+     4 +    case inactiveTool
+     5 +    case idle
+     6 +    case running
+     7 +    case waitingInput
+     8 +    case success
+     9 +    case error
+    10 +}
+    11 +
+    12 +enum TaskRenderTone: String, Codable, Hashable {
+    13 +    case neutral
+    14 +    case running
+    15 +    case warning
+    16 +    case success
+    17 +    case error
+    18 +    case inactive
+    19 +}
+    20 +
+    21 +struct TaskSessionRawAnalysis: Hashable {
+    22 +    let lifecycle: TaskLifecycleState
+    23 +    let renderTone: TaskRenderTone
+    24 +    let secondaryText: String
+    25 +
+    26 +    static func inactive(_ text: String) -> TaskSessionRawAnalysis {
+    27 +        TaskSessionRawAnalysis(
+    28 +            lifecycle: .inactiveTool,
+    29 +            renderTone: .inactive,
+    30 +            secondaryText: text
+    31 +        )
+    32 +    }
+    33 +}
+    34 +
+    35 +struct TaskSessionSnapshot: Hashable {
+    36 +    let sessionID: String
+    37 +    let strategyID: String
+    38 +    let strategyDisplayName: String
+    39 +    let lifecycle: TaskLifecycleState
+    40 +    let renderTone: TaskRenderTone
+    41 +    let isRunning: Bool
+    42 +    let secondaryText: String
+    43 +    let refreshedAt: Date
+    44 +}
+
+• Added Sources/Services/TaskEngine/TaskSessionTextToolkit.swift (+184 -0)
+      1 +import Foundation
+      2 +
+      3 +enum TaskSessionTextToolkit {
+      4 +    static func truncate(_ text: String, max: Int) -> String {
+      5 +        guard text.count > max else { return text }
+      6 +        return String(text.prefix(max)) + "…"
+      7 +    }
+      8 +
+      9 +    static func normalizedOutputLines(from tail: String) -> [String] {
+     10 +        tail
+     11 +            .split(whereSeparator: \.isNewline)
+     12 +            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+     13 +            .filter { !$0.isEmpty }
+     14 +            .filter { !isUserInputCommandLine($0) }
+     15 +            .filter { !isNoiseLine($0) }
+     16 +            .filter { !isInputAreaLine($0) }
+     17 +    }
+     18 +
+     19 +    static func normalizedDisplayLines(from tail: String) -> [String] {
+     20 +        tail
+     21 +            .split(whereSeparator: \.isNewline)
+     22 +            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+     23 +            .filter { !$0.isEmpty }
+     24 +            .filter { !isNoiseLine($0) }
+     25 +            .filter { !isInputAreaLine($0) }
+     26 +    }
+     27 +
+     28 +    static func compactTailText(_ tail: String) -> String {
+     29 +        normalizedOutputLines(from: tail)
+     30 +            .joined(separator: " ")
+     31 +            .trimmingCharacters(in: .whitespacesAndNewlines)
+     32 +    }
+     33 +
+     34 +    static func extractLatestUserPrompt(from tail: String) -> String? {
+     35 +        let lines = tail
+     36 +            .split(whereSeparator: \.isNewline)
+     37 +            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+     38 +            .filter { !$0.isEmpty }
+     39 +
+     40 +        for line in lines.reversed() {
+     41 +            guard isUserInputCommandLine(line) else { continue }
+     42 +            var prompt = line
+     43 +                .replacingOccurrences(of: "^[❯›»>]\\s*", with: "", options: .regularExpression)
+     44 +                .trimmingCharacters(in: .whitespacesAndNewlines)
+     45 +            if prompt.isEmpty { continue }
+     46 +            if isNoiseLine(prompt) || isInputAreaLine(prompt) { continue }
+     47 +            if prompt.lowercased().contains("what should claude do") { continue }
+     48 +            if prompt.count > 120 {
+     49 +                prompt = String(prompt.prefix(120))
+     50 +            }
+     51 +            return prompt
+     52 +        }
+     53 +        return nil
+     54 +    }
+     55 +
+     56 +    static func extractLatestReply(from tail: String) -> String? {
+     57 +        normalizedDisplayLines(from: tail)
+     58 +            .reversed()
+     59 +            .first(where: { !isUserInputCommandLine($0) })
+     60 +    }
+     61 +
+     62 +    static func lastErrorText(from tail: String) -> String {
+     63 +        let lines = normalizedOutputLines(from: tail)
+     64 +        let markers = [
+     65 +            "error", "failed", "exception", "unauthorized", "auth_error", "401", "timeout",
+     66 +            "报错", "失败", "错误", "超时",
+     67 +        ]
+     68 +        for line in lines.reversed() {
+     69 +            let lower = line.lowercased()
+     70 +            if markers.contains(where: { lower.contains($0) }) {
+     71 +                return truncate(line, max: 88)
+     72 +            }
+     73 +        }
+     74 +        if let last = lines.last {
+     75 +            return truncate(last, max: 88)
+     76 +        }
+     77 +        return "检测到异常"
+     78 +    }
+     79 +
+     80 +    static func twoLinesPromptAndReply(from tail: String) -> String {
+     81 +        let prompt = extractLatestUserPrompt(from: tail)
+     82 +        let reply = extractLatestReply(from: tail)
+     83 +        if let prompt, let reply {
+     84 +            return "\(truncate(prompt, max: 30))\n\(truncate(reply, max: 88))"
+     85 +        }
+     86 +        if let reply {
+     87 +            return "（未识别到提问）\n\(truncate(reply, max: 88))"
+     88 +        }
+     89 +        return "暂无可展示输出"
+     90 +    }
+     91 +
+     92 +    static func twoLinesPromptAndError(from tail: String) -> String {
+     93 +        let prompt = extractLatestUserPrompt(from: tail)
+     94 +        let err = lastErrorText(from: tail)
+     95 +        if let prompt {
+     96 +            return "\(truncate(prompt, max: 30))\n\(truncate(err, max: 88))"
+     97 +        }
+     98 +        return "（未识别到提问）\n\(truncate(err, max: 88))"
+     99 +    }
+    100 +
+    101 +    static func containsErrorMarkers(_ textLowercased: String) -> Bool {
+    102 +        [
+    103 +            "error", "failed", "exception", "auth_error", "unauthorized", "401",
+    104 +            "timeout", "timed out", "报错", "失败", "错误", "超时",
+    105 +        ].contains(where: { textLowercased.contains($0) })
+    106 +    }
+    107 +
+    108 +    static func containsWaitingMarkers(_ textLowercased: String) -> Bool {
+    109 +        [
+    110 +            "allow", "approve", "confirm", "[y/n]", "(y/n)",
+    111 +            "请确认", "请选择", "是否允许",
+    112 +        ].contains(where: { textLowercased.contains($0) })
+    113 +    }
+    114 +
+    115 +    static func containsRunningMarkers(_ textLowercased: String) -> Bool {
+    116 +        [
+    117 +            "running", "executing", "processing", "thinking", "analyzing",
+    118 +            "处理中", "执行中", "思考中",
+    119 +        ].contains(where: { textLowercased.contains($0) })
+    120 +    }
+    121 +
+    122 +    static func containsSuccessMarkers(_ textLowercased: String) -> Bool {
+    123 +        [
+    124 +            "done", "completed", "finished", "success", "已完成", "成功", "完成",
+    125 +        ].contains(where: { textLowercased.contains($0) })
+    126 +    }
+    127 +
+    128 +    static func isUserInputCommandLine(_ line: String) -> Bool {
+    129 +        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    130 +        trimmed.hasPrefix("❯") || trimmed.hasPrefix("›") || trimmed.hasPrefix("»") || trimmed.hasPrefix(">")
+    131 +    }
+    132 +
+    133 +    static func isNoiseLine(_ line: String) -> Bool {
+    134 +        let lower = line.lowercased()
+    135 +        let noiseMarkers = [
+    136 +            "esc to interrupt",
+    137 +            "image in clipboard",
+    138 +            "ctrl+v to paste",
+    139 +            "for shortcuts",
+    140 +            "update available",
+    141 +            "run: brew upgrade claude-code",
+    142 +            "claude code (",
+    143 +            "claude code v",
+    144 +            "sonnet",
+    145 +            "api usage",
+    146 +            "recent activity",
+    147 +            "tips for getting started",
+    148 +            "welcome back",
+    149 +        ]
+    150 +        if noiseMarkers.contains(where: { lower.contains($0) }) {
+    151 +            return true
+    152 +        }
+    153 +        let stripped = lower.replacingOccurrences(of: " ", with: "")
+    154 +        if stripped.allSatisfy({ "-_=|·•:".contains($0) }) {
+    155 +            return true
+    156 +        }
+    157 +        return false
+    158 +    }
+    159 +
+    160 +    static func isInputAreaLine(_ line: String) -> Bool {
+    161 +        let lower = line.lowercased()
+    162 +        let inputMarkers = [
+    163 +            "send message",
+    164 +            "shift+enter",
+    165 +            "press enter",
+    166 +            "type a message",
+    167 +            "ask claude",
+    168 +            "esc to interrupt",
+    169 +        ]
+    170 +        if inputMarkers.contains(where: { lower.contains($0) }) {
+    171 +            return true
+    172 +        }
+    173 +        if line.contains("╭") || line.contains("╰")
+    174 +            || line.contains("┌") || line.contains("└")
+    175 +            || line.contains("│") || line.contains("┃")
+    176 +            || line.contains("┆") || line.contains("─") {
+    177 +            return true
+    178 +        }
+    179 +        if line == ":" || line == ">" || line.hasPrefix("> ") {
+    180 +            return true
+    181 +        }
+    182 +        return false
+    183 +    }
+    184 +}
+
+• Added Sources/Services/TaskEngine/TaskSessionStrategy.swift (+200 -0)
+      1 +import Foundation
+      2 +
+      3 +protocol TaskSessionStrategy {
+      4 +    var strategyID: String { get }
+      5 +    var displayName: String { get }
+      6 +    var priority: Int { get }
+      7 +
+      8 +    func supports(session: CapturedTerminalSession) -> Bool
+      9 +    func analyze(session: CapturedTerminalSession) -> TaskSessionRawAnalysis
+     10 +}
+     11 +
+     12 +enum TaskSessionStrategies {
+     13 +    static func defaults() -> [any TaskSessionStrategy] {
+     14 +        [
+     15 +            ClaudeTaskSessionStrategy(),
+     16 +            CodexTaskSessionStrategy(),
+     17 +            GenericTaskSessionStrategy(),
+     18 +        ]
+     19 +    }
+     20 +}
+     21 +
+     22 +struct ClaudeTaskSessionStrategy: TaskSessionStrategy {
+     23 +    let strategyID = "claude"
+     24 +    let displayName = "Claude"
+     25 +    let priority = 300
+     26 +
+     27 +    func supports(session: CapturedTerminalSession) -> Bool {
+     28 +        let titleLower = session.title.lowercased()
+     29 +        let tailLower = session.tailOutput.lowercased()
+     30 +        let markers = [
+     31 +            "claude", "claude code", "what should claude do",
+     32 +            "billowing", "sonnet", "ask claude", "esc to interrupt",
+     33 +        ]
+     34 +        if titleLower.contains("claude") { return true }
+     35 +        return markers.contains(where: { tailLower.contains($0) })
+     36 +    }
+     37 +
+     38 +    func analyze(session: CapturedTerminalSession) -> TaskSessionRawAnalysis {
+     39 +        let compact = TaskSessionTextToolkit.compactTailText(session.tailOutput)
+     40 +        let lower = compact.lowercased()
+     41 +        if compact.isEmpty {
+     42 +            return TaskSessionRawAnalysis(
+     43 +                lifecycle: .idle,
+     44 +                renderTone: .neutral,
+     45 +                secondaryText: "当前未运行任务"
+     46 +            )
+     47 +        }
+     48 +        if TaskSessionTextToolkit.containsErrorMarkers(lower) {
+     49 +            return TaskSessionRawAnalysis(
+     50 +                lifecycle: .error,
+     51 +                renderTone: .error,
+     52 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndError(from: session.tailOutput)
+     53 +            )
+     54 +        }
+     55 +        if TaskSessionTextToolkit.containsWaitingMarkers(lower) {
+     56 +            return TaskSessionRawAnalysis(
+     57 +                lifecycle: .waitingInput,
+     58 +                renderTone: .warning,
+     59 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+     60 +            )
+     61 +        }
+     62 +        if TaskSessionTextToolkit.containsRunningMarkers(lower) {
+     63 +            return TaskSessionRawAnalysis(
+     64 +                lifecycle: .running,
+     65 +                renderTone: .running,
+     66 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+     67 +            )
+     68 +        }
+     69 +        if TaskSessionTextToolkit.containsSuccessMarkers(lower) {
+     70 +            return TaskSessionRawAnalysis(
+     71 +                lifecycle: .success,
+     72 +                renderTone: .success,
+     73 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+     74 +            )
+     75 +        }
+     76 +        return TaskSessionRawAnalysis(
+     77 +            lifecycle: .idle,
+     78 +            renderTone: .neutral,
+     79 +            secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+     80 +        )
+     81 +    }
+     82 +}
+     83 +
+     84 +struct CodexTaskSessionStrategy: TaskSessionStrategy {
+     85 +    let strategyID = "codex"
+     86 +    let displayName = "Codex"
+     87 +    let priority = 260
+     88 +
+     89 +    func supports(session: CapturedTerminalSession) -> Bool {
+     90 +        let titleLower = session.title.lowercased()
+     91 +        let tailLower = session.tailOutput.lowercased()
+     92 +        let markers = [
+     93 +            "codex",
+     94 +            "openai codex",
+     95 +            "gpt-5-codex",
+     96 +            "responses api",
+     97 +            "agent",
+     98 +            "assistant",
+     99 +        ]
+    100 +        if titleLower.contains("codex") { return true }
+    101 +        return markers.contains(where: { tailLower.contains($0) })
+    102 +    }
+    103 +
+    104 +    func analyze(session: CapturedTerminalSession) -> TaskSessionRawAnalysis {
+    105 +        let compact = TaskSessionTextToolkit.compactTailText(session.tailOutput)
+    106 +        let lower = compact.lowercased()
+    107 +        if compact.isEmpty {
+    108 +            return TaskSessionRawAnalysis(
+    109 +                lifecycle: .idle,
+    110 +                renderTone: .neutral,
+    111 +                secondaryText: "当前未运行任务"
+    112 +            )
+    113 +        }
+    114 +        if TaskSessionTextToolkit.containsErrorMarkers(lower) {
+    115 +            return TaskSessionRawAnalysis(
+    116 +                lifecycle: .error,
+    117 +                renderTone: .error,
+    118 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndError(from: session.tailOutput)
+    119 +            )
+    120 +        }
+    121 +        if TaskSessionTextToolkit.containsWaitingMarkers(lower) {
+    122 +            return TaskSessionRawAnalysis(
+    123 +                lifecycle: .waitingInput,
+    124 +                renderTone: .warning,
+    125 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    126 +            )
+    127 +        }
+    128 +        if TaskSessionTextToolkit.containsRunningMarkers(lower) {
+    129 +            return TaskSessionRawAnalysis(
+    130 +                lifecycle: .running,
+    131 +                renderTone: .running,
+    132 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    133 +            )
+    134 +        }
+    135 +        if TaskSessionTextToolkit.containsSuccessMarkers(lower) {
+    136 +            return TaskSessionRawAnalysis(
+    137 +                lifecycle: .success,
+    138 +                renderTone: .success,
+    139 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    140 +            )
+    141 +        }
+    142 +        return TaskSessionRawAnalysis(
+    143 +            lifecycle: .idle,
+    144 +            renderTone: .neutral,
+    145 +            secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    146 +        )
+    147 +    }
+    148 +}
+    149 +
+    150 +struct GenericTaskSessionStrategy: TaskSessionStrategy {
+    151 +    let strategyID = "generic"
+    152 +    let displayName = "Generic TUI"
+    153 +    let priority = 10
+    154 +
+    155 +    func supports(session: CapturedTerminalSession) -> Bool {
+    156 +        _ = session
+    157 +        return true
+    158 +    }
+    159 +
+    160 +    func analyze(session: CapturedTerminalSession) -> TaskSessionRawAnalysis {
+    161 +        let compact = TaskSessionTextToolkit.compactTailText(session.tailOutput)
+    162 +        let lower = compact.lowercased()
+    163 +        if compact.isEmpty {
+    164 +            return TaskSessionRawAnalysis.inactive("当前会话未匹配 Claude/Codex 策略")
+    165 +        }
+    166 +        if TaskSessionTextToolkit.containsErrorMarkers(lower) {
+    167 +            return TaskSessionRawAnalysis(
+    168 +                lifecycle: .error,
+    169 +                renderTone: .error,
+    170 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndError(from: session.tailOutput)
+    171 +            )
+    172 +        }
+    173 +        if TaskSessionTextToolkit.containsWaitingMarkers(lower) {
+    174 +            return TaskSessionRawAnalysis(
+    175 +                lifecycle: .waitingInput,
+    176 +                renderTone: .warning,
+    177 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    178 +            )
+    179 +        }
+    180 +        if TaskSessionTextToolkit.containsRunningMarkers(lower) {
+    181 +            return TaskSessionRawAnalysis(
+    182 +                lifecycle: .running,
+    183 +                renderTone: .running,
+    184 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    185 +            )
+    186 +        }
+    187 +        if TaskSessionTextToolkit.containsSuccessMarkers(lower) {
+    188 +            return TaskSessionRawAnalysis(
+    189 +                lifecycle: .success,
+    190 +                renderTone: .success,
+    191 +                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+    192 +            )
+    193 +        }
+    194 +        return TaskSessionRawAnalysis(
+    195 +            lifecycle: .idle,
+    196 +            renderTone: .neutral,
+    197 +            secondaryText: TaskSessionTextToolkit.truncate(compact, max: 88)
+    198 +        )
+    199 +    }
+    200 +}
+
+• Added Sources/Services/TaskEngine/TaskSessionStateMachine.swift (+45 -0)
+     1 +import Foundation
+     2 +
+     3 +struct TaskSessionStateMachine {
+     4 +    private struct Memory {
+     5 +        var lifecycle: TaskLifecycleState
+     6 +        var updatedAt: Date
+     7 +    }
+     8 +
+     9 +    private var memoryBySessionID: [String: Memory] = [:]
+    10 +
+    11 +    mutating func purge(keepingSessionIDs: Set<String>) {
+    12 +        memoryBySessionID = memoryBySessionID.filter { keepingSessionIDs.contains($0.key) }
+    13 +    }
+    14 +
+    15 +    mutating func stabilize(
+    16 +        sessionID: String,
+    17 +        proposed: TaskLifecycleState,
+    18 +        now: Date
+    19 +    ) -> TaskLifecycleState {
+    20 +        defer {
+    21 +            memoryBySessionID[sessionID] = Memory(lifecycle: proposed, updatedAt: now)
+    22 +        }
+    23 +        guard let prev = memoryBySessionID[sessionID] else {
+    24 +            return proposed
+    25 +        }
+    26 +
+    27 +        if prev.lifecycle == .error,
+    28 +           proposed != .running,
+    29 +           now.timeIntervalSince(prev.updatedAt) <= 8 {
+    30 +            return .error
+    31 +        }
+    32 +        if prev.lifecycle == .success,
+    33 +           proposed != .running,
+    34 +           proposed != .error,
+    35 +           now.timeIntervalSince(prev.updatedAt) <= 5 {
+    36 +            return .success
+    37 +        }
+    38 +        if prev.lifecycle == .running,
+    39 +           proposed == .idle,
+    40 +           now.timeIntervalSince(prev.updatedAt) <= 2 {
+    41 +            return .running
+    42 +        }
+    43 +        return proposed
+    44 +    }
+    45 +}
+
+• Added Sources/Services/TaskEngine/TaskSessionEngine.swift (+96 -0)
+     1 +import Foundation
+     2 +
+     3 +@MainActor
+     4 +final class TaskSessionEngine: ObservableObject {
+     5 +    @Published private(set) var snapshotsBySessionID: [String: TaskSessionSnapshot] = [:]
+     6 +
+     7 +    private var strategies: [any TaskSessionStrategy]
+     8 +    private var stateMachine = TaskSessionStateMachine()
+     9 +
+    10 +    init(strategies: [any TaskSessionStrategy] = TaskSessionStrategies.defaults()) {
+    11 +        self.strategies = Self.sortedStrategies(strategies)
+    12 +    }
+    13 +
+    14 +    func replaceStrategies(_ newStrategies: [any TaskSessionStrategy]) {
+    15 +        strategies = Self.sortedStrategies(newStrategies)
+    16 +    }
+    17 +
+    18 +    func installStrategy(_ strategy: any TaskSessionStrategy) {
+    19 +        let existing = strategies.filter { $0.strategyID != strategy.strategyID }
+    20 +        strategies = Self.sortedStrategies(existing + [strategy])
+    21 +    }
+    22 +
+    23 +    func refresh(
+    24 +        sessions: [CapturedTerminalSession],
+    25 +        activeSessionIDs: Set<String>,
+    26 +        now: Date = Date()
+    27 +    ) {
+    28 +        let liveIDs = Set(sessions.map(\.id))
+    29 +        stateMachine.purge(keepingSessionIDs: liveIDs)
+    30 +
+    31 +        var next: [String: TaskSessionSnapshot] = [:]
+    32 +        next.reserveCapacity(sessions.count)
+    33 +
+    34 +        for session in sessions {
+    35 +            let strategy = resolveStrategy(for: session)
+    36 +            var analysis = strategy.analyze(session: session)
+    37 +
+    38 +            var lifecycle = analysis.lifecycle
+    39 +            if activeSessionIDs.contains(session.id), lifecycle != .error, lifecycle != .success {
+    40 +                lifecycle = (lifecycle == .waitingInput) ? .waitingInput : .running
+    41 +                if lifecycle == .running {
+    42 +                    analysis = TaskSessionRawAnalysis(
+    43 +                        lifecycle: .running,
+    44 +                        renderTone: .running,
+    45 +                        secondaryText: analysis.secondaryText
+    46 +                    )
+    47 +                }
+    48 +            }
+    49 +
+    50 +            let stabilized = stateMachine.stabilize(
+    51 +                sessionID: session.id,
+    52 +                proposed: lifecycle,
+    53 +                now: now
+    54 +            )
+    55 +            let tone = renderTone(for: stabilized, fallback: analysis.renderTone)
+    56 +            let running = (stabilized == .running || stabilized == .waitingInput)
+    57 +
+    58 +            next[session.id] = TaskSessionSnapshot(
+    59 +                sessionID: session.id,
+    60 +                strategyID: strategy.strategyID,
+    61 +                strategyDisplayName: strategy.displayName,
+    62 +                lifecycle: stabilized,
+    63 +                renderTone: tone,
+    64 +                isRunning: running,
+    65 +                secondaryText: analysis.secondaryText,
+    66 +                refreshedAt: now
+    67 +            )
+    68 +        }
+    69 +
+    70 +        snapshotsBySessionID = next
+    71 +    }
+    72 +
+    73 +    private func resolveStrategy(for session: CapturedTerminalSession) -> any TaskSessionStrategy {
+    74 +        strategies.first(where: { $0.supports(session: session) }) ?? GenericTaskSessionStrategy()
+    75 +    }
+    76 +
+    77 +    private func renderTone(for state: TaskLifecycleState, fallback: TaskRenderTone) -> TaskRenderTone {
+    78 +        switch state {
+    79 +        case .inactiveTool: return .inactive
+    80 +        case .idle: return .neutral
+    81 +        case .running: return .running
+    82 +        case .waitingInput: return .warning
+    83 +        case .success: return .success
+    84 +        case .error: return .error
+    85 +        }
+    86 +    }
+    87 +
+    88 +    private static func sortedStrategies(_ list: [any TaskSessionStrategy]) -> [any TaskSessionStrategy] {
+    89 +        list.sorted { lhs, rhs in
+    90 +            if lhs.priority == rhs.priority {
+    91 +                return lhs.strategyID < rhs.strategyID
+    92 +            }
+    93 +            return lhs.priority > rhs.priority
+    94 +        }
+    95 +    }
+    96 +}
+
+─ Worked for 2m 02s ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 引擎与策略模块已加好。下一步我会改 IslandView 的 task 面板数据源，切换为引擎快照输出，并移除旧的 Claude 专属判定路径对渲染
+  的直接依赖。
+
+• Edited Sources/Views/IslandView.swift (+1 -0)
+    10      @StateObject private var terminalCapture = TerminalCaptureService()
+    11 +    @StateObject private var taskSessionEngine = TaskSessionEngine()
+    12      @State private var isLaunchpadEditing = false
+
+• Edited Sources/Views/IslandView.swift (+2 -0)
+     99              syncTerminalCaptureConfig()
+    100 +            refreshTaskSnapshots()
+    101              if !taskBreathPhase {
+        ⋮
+    202          .onChange(of: terminalCapture.statusRevision) { _ in
+    203 +            refreshTaskSnapshots()
+    204              if let text = terminalCapture.latestStatusText, !text.isEmpty {
+
+• Edited Sources/Views/IslandView.swift (+39 -14)
+    1030                          } else {
+    1031 -                            ForEach(group.tasks, id: \.id) { task in
+    1032 -                                let visual = taskVisualMeta(for: task)
+    1031 +                            ForEach(group.tasks, id: \.session.id) { item in
+    1032 +                                let task = item.session
+    1033 +                                let snap = item.snapshot
+    1034                                  let isMuted = terminalCapture.isSessionMuted(task.id)
+         ⋮
+    1037                                          Circle()
+    1037 -                                            .fill(visual.color)
+    1038 +                                            .fill(taskIndicatorColor(tone: snap.renderTone))
+    1039                                              .frame(width: 9, height: 9)
+    1039 -                                            .shadow(color: visual.color.opacity(0.55), radius: visual.isRunning ?
+          4 : 1, x: 0, y: 0)
+    1040 +                                            .shadow(color: taskIndicatorColor(tone: snap.renderTone).opacity(0.55)
+          , radius: snap.isRunning ? 4 : 1, x: 0, y: 0)
+    1041                                              .opacity(taskBreathPhase ? 1 : 0.7)
+         ⋮
+    1082
+    1082 -                                    Text(taskSecondaryText(for: task, visual: visual))
+    1083 +                                    Text(snap.secondaryText)
+    1084                                          .font(.system(size: taskFontBase, weight: .medium))
+    1084 -                                        .foregroundStyle(.white.opacity(isMuted ? 0.68 : (visual.isRunning ? (task
+          BreathPhase ? 0.9 : 0.72) : 0.82)))
+    1085 +                                        .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBr
+          eathPhase ? 0.9 : 0.72) : 0.82)))
+    1086                                          .lineLimit(2)
+         ⋮
+    1089                                      HStack(spacing: 6) {
+    1090 +                                        Text(snap.strategyDisplayName)
+    1091 +                                        Text("·")
+    1092                                          Text(task.terminalKind.rawValue)
+         ⋮
+    1104                                      RoundedRectangle(cornerRadius: 10, style: .continuous)
+    1102 -                                        .fill(taskRowBackgroundColor(visual: visual, isMuted: isMuted))
+    1105 +                                        .fill(taskRowBackgroundColor(tone: snap.renderTone, isMuted: isMuted))
+    1106                                          .overlay {
+    1104 -                                            if visual.isRunning {
+    1107 +                                            if snap.isRunning {
+    1108                                                  taskRunningWaveOverlay(isMuted: isMuted)
+         ⋮
+    1112                                              RoundedRectangle(cornerRadius: 10, style: .continuous)
+    1110 -                                                .strokeBorder(taskRowBorderColor(visual: visual, isMuted: isMuted)
+          , lineWidth: 1)
+    1113 +                                                .strokeBorder(taskRowBorderColor(tone: snap.renderTone, isMuted: i
+          sMuted), lineWidth: 1)
+    1114                                          )
+         ⋮
+    1117                                  .onTapGesture {
+    1115 -                                    jumpToExternalTask(session: task)
+    1118 +                                    jumpToExternalTask(session: task, lifecycle: snap.lifecycle)
+    1119                                  }
+         ⋮
+    1135
+    1133 -    private var taskGroups: [(name: String, tasks: [CapturedTerminalSession])] {
+    1136 +    private struct TaskBoardRow: Hashable {
+    1137 +        let session: CapturedTerminalSession
+    1138 +        let snapshot: TaskSessionSnapshot
+    1139 +    }
+    1140 +
+    1141 +    private var taskGroups: [(name: String, tasks: [TaskBoardRow])] {
+    1142 +        let rows: [TaskBoardRow] = terminalCapture.sessions.compactMap { session in
+    1143 +            guard let snap = taskSessionEngine.snapshotsBySessionID[session.id] else { return nil }
+    1144 +            return TaskBoardRow(session: session, snapshot: snap)
+    1145 +        }
+    1146          let captured = Dictionary(grouping: terminalCapture.sessions) { session in
+         ⋮
+    1152          }
+    1153 +        let rowsByGroup = Dictionary(grouping: rows) { $0.session.captureGroupKey.trimmingCharacters(in: .whitespa
+          cesAndNewlines).isEmpty ? "iTerm" : $0.session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines) }
+    1154          let orderedNames = ["iTerm", "Terminal"]
+    1142 -        var result: [(name: String, tasks: [CapturedTerminalSession])] = []
+    1155 +        var result: [(name: String, tasks: [TaskBoardRow])] = []
+    1156          for name in orderedNames {
+    1144 -            result.append((name: name, tasks: captured[name] ?? []))
+    1157 +            let tasks = (rowsByGroup[name] ?? []).sorted { lhs, rhs in
+    1158 +                if lhs.snapshot.lifecycle == rhs.snapshot.lifecycle {
+    1159 +                    return lhs.session.title.localizedStandardCompare(rhs.session.title) == .orderedAscending
+    1160 +                }
+    1161 +                return taskLifecycleRank(lhs.snapshot.lifecycle) > taskLifecycleRank(rhs.snapshot.lifecycle)
+    1162 +            }
+    1163 +            result.append((name: name, tasks: tasks))
+    1164          }
+    1146 -        for (name, tasks) in captured where !orderedNames.contains(name) {
+    1165 +        for (name, _) in captured where !orderedNames.contains(name) {
+    1166 +            let tasks = (rowsByGroup[name] ?? []).sorted { lhs, rhs in
+    1167 +                if lhs.snapshot.lifecycle == rhs.snapshot.lifecycle {
+    1168 +                    return lhs.session.title.localizedStandardCompare(rhs.session.title) == .orderedAscending
+    1169 +                }
+    1170 +                return taskLifecycleRank(lhs.snapshot.lifecycle) > taskLifecycleRank(rhs.snapshot.lifecycle)
+    1171 +            }
+    1172              result.append((name: name, tasks: tasks))
+
+• Edited Sources/Views/IslandView.swift (+38 -3)
+    1381          )
+    1382 +        refreshTaskSnapshots()
+    1383      }
+         ⋮
+    1401
+    1401 -    private func jumpToExternalTask(session: CapturedTerminalSession) {
+    1402 +    private func refreshTaskSnapshots() {
+    1403 +        taskSessionEngine.refresh(
+    1404 +            sessions: terminalCapture.sessions,
+    1405 +            activeSessionIDs: terminalCapture.activeSessionIDs
+    1406 +        )
+    1407 +    }
+    1408 +
+    1409 +    private func jumpToExternalTask(session: CapturedTerminalSession, lifecycle: TaskLifecycleState) {
+    1410          terminalCapture.acknowledgeCurrentIssue(for: session)
+    1411          terminalCapture.activate(session: session)
+    1404 -        let visual = taskVisualMeta(for: session)
+    1405 -        if visual.kind == .error {
+    1421
+    1422 +    private func taskLifecycleRank(_ state: TaskLifecycleState) -> Int {
+    1423 +        switch state {
+    1424 +        case .error: return 6
+    1425 +        case .waitingInput: return 5
+    1426 +        case .running: return 4
+    1427 +        case .success: return 3
+    1428 +        case .idle: return 2
+    1429 +        case .inactiveTool: return 1
+    1430 +        }
+    1431 +    }
+    1432 +
+    1433 +    private func taskIndicatorColor(tone: TaskRenderTone) -> Color {
+    1434 +        switch tone {
+    1435 +        case .error:
+    1436 +            return Color.red.opacity(0.92)
+    1437 +        case .warning:
+    1438 +            return Color.orange.opacity(0.95)
+    1439 +        case .running:
+    1440 +            return Color.green.opacity(0.95)
+    1441 +        case .success:
+    1442 +            return Color.green.opacity(0.95)
+    1443 +        case .inactive:
+    1444 +            return Color.gray.opacity(0.85)
+    1445 +        case .neutral:
+    1446 +            return Color.green.opacity(0.95)
+    1447 +        }
+    1448 +    }
+    1449 +
+    1450      private enum TaskStatusKind {
+
+• Explored
+  └ Search taskRowBackgroundColor\(|taskRowBorderColor\( in IslandView.swift
+
+• Edited Sources/Views/IslandView.swift (+12 -8)
+    1527      private func taskRowBackgroundColor(
+    1528 -        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind),
+    1528 +        tone: TaskRenderTone,
+    1529          isMuted: Bool
+         ⋮
+    1531          let base: Color = {
+    1533 +            case .neutral:
+    1534                  return Color.green.opacity(0.14)
+    1535 -            case .inactiveNoClaude:
+    1535 +            case .inactive:
+    1536                  return Color.gray.opacity(0.14)
+         ⋮
+    1540                  return Color.green.opacity(0.14)
+    1541 +            case .warning:
+    1542 +                return Color.orange.opacity(0.14)
+    1543              case .error:
+         ⋮
+    1551      private func taskRowBorderColor(
+    1550 -        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind),
+    1552 +        tone: TaskRenderTone,
+    1553          isMuted: Bool
+         ⋮
+    1555          let base: Color = {
+    1554 -            switch visual.kind {
+    1555 -            case .idle:
+    1556 +            switch tone {
+    1557 +            case .neutral:
+    1558                  return Color.green.opacity(0.30)
+    1557 -            case .inactiveNoClaude:
+    1559 +            case .inactive:
+    1560                  return Color.gray.opacity(0.28)
+         ⋮
+    1564                  return Color.green.opacity(0.30)
+    1565 +            case .warning:
+    1566 +                return Color.orange.opacity(0.34)
+    1567              case .error:
+
+• Explored
+  └ Search TaskStatusKind|taskVisualMeta\(|looksLikeClaudeSession\(|taskSecondaryText\( in IslandView.swift
+
+• Edited Sources/Views/IslandView.swift (+0 -77)
+    1449
+    1450 -    private enum TaskStatusKind {
+    1451 -        case idle
+    1452 -        case inactiveNoClaude
+    1453 -        case running
+    1454 -        case success
+    1455 -        case error
+    1456 -    }
+    1457 -
+    1458 -    private func taskVisualMeta(for session: CapturedTerminalSession) -> (color: Color, isRunning: Bool, kind: Tas
+          kStatusKind) {
+    1459 -        let lines = normalizedTaskOutputLines(from: session.tailOutput)
+    1460 -        let compact = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    1461 -        let lower = compact.lowercased()
+    1462 -        let seemsClaudeSession = looksLikeClaudeSession(session)
+    1463 -        if !seemsClaudeSession {
+    1464 -            return (Color.gray.opacity(0.85), false, .inactiveNoClaude)
+    1465 -        }
+    1466 -        if compact.isEmpty {
+    1467 -            return (Color.green.opacity(0.95), false, .idle)
+    1468 -        }
+    1469 -        if lower.contains("error") || lower.contains("failed") || lower.contains("exception")
+    1470 -            || lower.contains("auth_error") || lower.contains("unauthorized") || lower.contains("401")
+    1471 -            || lower.contains("timeout") || lower.contains("timed out")
+    1472 -            || lower.contains("报错") || lower.contains("失败") || lower.contains("错误") || lower.contains("超时"
+          ) {
+    1473 -            return (Color.red.opacity(0.92), false, .error)
+    1474 -        }
+    1475 -        if terminalCapture.activeSessionIDs.contains(session.id) {
+    1476 -            return (Color.green.opacity(0.95), true, .running)
+    1477 -        }
+    1478 -        if lower.contains("done") || lower.contains("completed") || lower.contains("finished")
+    1479 -            || lower.contains("success") || lower.contains("已完成") || lower.contains("成功") || lower.contains("
+          完成") {
+    1480 -            return (Color.green.opacity(0.95), false, .success)
+    1481 -        }
+    1482 -        if lower.contains("allow") || lower.contains("approve") || lower.contains("confirm")
+    1483 -            || lower.contains("[y/n]") || lower.contains("(y/n)")
+    1484 -            || lower.contains("请确认") || lower.contains("请选择") || lower.contains("是否允许")
+    1485 -            || lower.contains("running") || lower.contains("executing") || lower.contains("processing")
+    1486 -            || lower.contains("thinking") || lower.contains("analyzing")
+    1487 -            || lower.contains("处理中") || lower.contains("执行中") || lower.contains("思考中") {
+    1488 -            return (Color.green.opacity(0.95), true, .running)
+    1489 -        }
+    1490 -        return (Color.green.opacity(0.95), false, .idle)
+    1491 -    }
+    1492 -
+    1493 -    private func looksLikeClaudeSession(_ session: CapturedTerminalSession) -> Bool {
+    1494 -        let titleLower = session.title.lowercased()
+    1498 -            "claude code",
+    1499 -            "what should claude do",
+    1500 -            "billowing",
+    1501 -            "sonnet",
+    1502 -            "ask claude",
+    1503 -            "esc to interrupt"
+    1504 -        ]
+    1505 -        if titleLower.contains("claude") {
+    1506 -            return true
+    1507 -        }
+    1508 -        return claudeMarkers.contains(where: { tailLower.contains($0) })
+    1509 -    }
+    1510 -
+    1511 -    private func taskSecondaryText(
+    1512 -        for session: CapturedTerminalSession,
+    1513 -        visual: (color: Color, isRunning: Bool, kind: TaskStatusKind)
+    1514 -    ) -> String {
+    1515 -        if visual.kind == .idle {
+    1516 -            return "当前未运行任务"
+    1517 -        }
+    1518 -        if visual.kind == .inactiveNoClaude {
+    1519 -            return "当前会话未启动 claude"
+    1520 -        }
+    1521 -        if visual.kind == .error {
+    1522 -            return taskPromptAndErrorTextTwoLines(from: session.tailOutput)
+    1523 -        }
+    1524 -        return taskPromptAndReplyTextTwoLines(from: session.tailOutput)
+    1525 -    }
+    1526 -
+    1450      private func taskRowBackgroundColor(
+
+• Explored
+  └ Search jumpToExternalTask\( in IslandView.swift
+
+    3
+
+─ Worked for 2m 11s ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 我已经把 UI 侧接入改到新引擎了，正在跑一次编译检查，确认协议、状态机和三策略联动没有回归。
+
+• Ran swift build
+    132 |
+    [12/15] Compiling BulingIsland AppDelegate.swift
+
+• Edited Sources/Services/TaskEngine/TaskSessionTextToolkit.swift (+1 -1)
+    129          let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    130 -        trimmed.hasPrefix("❯") || trimmed.hasPrefix("›") || trimmed.hasPrefix("»") || trimmed.hasPrefix(">")
+    130 +        return trimmed.hasPrefix("❯") || trimmed.hasPrefix("›") || trimmed.hasPrefix("»") || trimmed.hasPrefix(">")
+    131      }
+
+• Ran swift build
+  └ [1/1] Compiling plugin GenerateManual
+    [2/2] Compiling plugin GenerateDoccReference
+    … +8 lines
+    [9/10] Applying BulingIsland
+    Build complete! (1.21s)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 编译已通过。最后我会给你一份简洁的变更清单：引擎抽象、可插拔策略（Claude/Codex/Generic）、状态机刷新规则、Task 面板接入
+  点，以及后续新增策略怎么挂载。
+
+• Explored
+  └ Read 2026-04-02-task-engine-plugin-strategy-design.md
+
+• Ran git status --short
+  └  M README.md
+     M Sources/Services/AppDiscoveryService.swift
+    … +7 lines
+    ?? Sources/Views/TaskPanelFeatureView.swift
+    ?? docs/
+
+• Explored
+  └ Read IslandView.swift, TaskSessionStrategy.swift, TaskSessionEngine.swift
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 我再补一个“全局策略注册入口”，让可插拔不只停留在引擎实例内部：新增 TaskSessionStrategyRegistry，可以在 app 启动阶段注册额
+  外策略，Task 引擎默认会加载。
+
+• Edited Sources/Services/TaskEngine/TaskSessionStrategy.swift (+19 -3)
+    11
+    12 -enum TaskSessionStrategies {
+    13 -    static func defaults() -> [any TaskSessionStrategy] {
+    14 -        [
+    12 +@MainActor
+    13 +enum TaskSessionStrategyRegistry {
+    14 +    private static var extraStrategies: [any TaskSessionStrategy] = []
+    15 +
+    16 +    static func register(_ strategy: any TaskSessionStrategy) {
+    17 +        extraStrategies.removeAll { $0.strategyID == strategy.strategyID }
+    18 +        extraStrategies.append(strategy)
+    19 +    }
+    20 +
+    21 +    static func replaceExtras(_ strategies: [any TaskSessionStrategy]) {
+    22 +        var seen = Set<String>()
+    23 +        extraStrategies = strategies.filter { seen.insert($0.strategyID).inserted }
+    24 +    }
+    25 +
+    26 +    static func resolvedStrategies() -> [any TaskSessionStrategy] {
+    27 +        var seen = Set<String>()
+    28 +        let builtins: [any TaskSessionStrategy] = [
+    29              ClaudeTaskSessionStrategy(),
+       ⋮
+    32          ]
+    33 +        let merged = extraStrategies + builtins
+    34 +        return merged.filter { seen.insert($0.strategyID).inserted }
+    35      }
+    11 +    init(strategies: [any TaskSessionStrategy] = TaskSessionStrategyRegistry.resolvedStrategies()) {
+    12          self.strategies = Self.sortedStrategies(strategies)
+
+• Ran swift build
+  └ [1/1] Compiling plugin GenerateManual
+    [2/2] Compiling plugin GenerateDoccReference
+    … +59 lines
+
+    [#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+
+• Edited Sources/Services/TaskEngine/TaskSessionEngine.swift (+5 -1)
+    10
+    11 -    init(strategies: [any TaskSessionStrategy] = TaskSessionStrategyRegistry.resolvedStrategies()) {
+    11 +    init(strategies: [any TaskSessionStrategy]) {
+    12          self.strategies = Self.sortedStrategies(strategies)
+       ⋮
+    14
+    15 +    convenience init() {
+    16 +        self.init(strategies: TaskSessionStrategyRegistry.resolvedStrategies())
+    17 +    }
+    18 +
+    19      func replaceStrategies(_ newStrategies: [any TaskSessionStrategy]) {
+
+• Ran swift build
+  └ [1/1] Compiling plugin GenerateManual
+    [2/2] Compiling plugin GenerateDoccReference
+    … +9 lines
+    [10/11] Applying BulingIsland
+    Build complete! (3.41s)
+
+• Explored
+  └ Read TaskSessionStateMachine.swift, TaskSessionTypes.swift, TaskSessionTextToolkit.swift, IslandView.swift,
+         TaskSessionStrategy.swift
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 已按你这次要求完成“先文档、后实现”，并把 Task 检测/状态机/渲染抽成可插拔引擎策略。
+
+  设计文档
+
+  - docs/2026-04-02-task-engine-plugin-strategy-design.md:1
+  核心改造
+
+  - 新增任务引擎与模型：
+      - Sources/Services/TaskEngine/TaskSessionTypes.swift:1
+      - Sources/Services/TaskEngine/TaskSessionStateMachine.swift:1
+      - Sources/Services/TaskEngine/TaskSessionEngine.swift:1
+      - Sources/Services/TaskEngine/TaskSessionTextToolkit.swift:1
+  - 新增可插拔策略协议与注册器（支持多策略）：
+      - Sources/Services/TaskEngine/TaskSessionStrategy.swift:3
+      - TaskSessionStrategyRegistry.register(...) 作为全局注册入口（可扩展更多 TUI）
+      - 内置策略：
+          - ClaudeTaskSessionStrategy
+          - CodexTaskSessionStrategy
+          - GenericTaskSessionStrategy
+  - 状态机刷新已抽离（防抖/粘滞）：
+      - error 粘滞 8s、success 粘滞 5s、running -> idle 延迟 2s
+      - 位置：Sources/Services/TaskEngine/TaskSessionStateMachine.swift:15
+  - Task 面板渲染改为消费引擎快照：
+      - Sources/Views/IslandView.swift:1010
+      - refreshTaskSnapshots() 接入轮询刷新：Sources/Views/IslandView.swift:1402
+      - 点击任务时按 lifecycle 执行行为（error 保持任务面板）：Sources/Views/IslandView.swift:1409
+
+  验证
+
+  - swift build 通过
+
+  如何继续扩展更多 TUI（如新增策略）
+
+  1. 新建一个实现 TaskSessionStrategy 的策略类型。
+  2. 在启动阶段调用 TaskSessionStrategyRegistry.register(YourStrategy())。
+  3. 引擎会按 priority 自动参与匹配与渲染。
+
+  另：我看到仓库里有一个你侧新增的未跟踪文件 .cursor/rules/docs-first-for-features.mdc，我没有改动它。是否需要我在下一步
+  把“策略注册示例”也接到 AppDelegate 启动流程里，一并提交成完整可调用入口？
+
+ 
+› Summarize recent commits
+ 
+  gpt-5.3-codex medium · 44% left · ~/git/buling-island

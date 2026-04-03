@@ -7,6 +7,7 @@ final class TaskSessionEngine: ObservableObject {
 
     private var strategies: [any TaskSessionStrategy]
     private var stateMachine = TaskSessionStateMachine()
+    private var taskPanelMemoryBySessionID: [String: TaskSessionPanelMemory] = [:]
 
     init(strategies: [any TaskSessionStrategy]) {
         self.strategies = Self.sortedStrategies(strategies)
@@ -25,33 +26,23 @@ final class TaskSessionEngine: ObservableObject {
         strategies = Self.sortedStrategies(existing + [strategy])
     }
 
+    /// 任务生命周期完全由各 `TaskSessionStrategy`（及 JSON 策略）依据终端尾部判定，不再根据「近期有输出」等启发式抬升为 `running`，避免未提交输入也被标为执行中。
     func refresh(
         sessions: [CapturedTerminalSession],
-        activeSessionIDs: Set<String>,
         now: Date = Date()
     ) {
         let liveIDs = Set(sessions.map(\.id))
         stateMachine.purge(keepingSessionIDs: liveIDs)
+        taskPanelMemoryBySessionID = taskPanelMemoryBySessionID.filter { liveIDs.contains($0.key) }
 
         var next: [String: TaskSessionSnapshot] = [:]
         next.reserveCapacity(sessions.count)
 
         for session in sessions {
             let strategy = resolveStrategy(for: session)
-            var analysis = strategy.analyze(session: session)
-
-            var lifecycle = analysis.lifecycle
-            if activeSessionIDs.contains(session.id), lifecycle != .error, lifecycle != .success {
-                lifecycle = (lifecycle == .waitingInput) ? .waitingInput : .running
-                if lifecycle == .running {
-                    analysis = TaskSessionRawAnalysis(
-                        lifecycle: .running,
-                        renderTone: .running,
-                        secondaryText: analysis.secondaryText,
-                        interactionOptions: analysis.interactionOptions
-                    )
-                }
-            }
+            let analysis = strategy.analyze(session: session)
+            let normalizedTail = session.standardizedTailOutput
+            let lifecycle = analysis.lifecycle
 
             let stabilized = stateMachine.stabilize(
                 sessionID: session.id,
@@ -59,7 +50,38 @@ final class TaskSessionEngine: ObservableObject {
                 now: now
             )
             let tone = renderTone(for: stabilized, fallback: analysis.renderTone)
-            let running = (stabilized == .running || stabilized == .waitingInput)
+            let running = (stabilized == .running)
+
+            var panelMem = taskPanelMemoryBySessionID[session.id] ?? TaskSessionPanelMemory()
+            let promptNow = TaskSessionTextToolkit.extractLatestUserPrompt(from: normalizedTail)
+            let replyNow = TaskSessionTextToolkit.extractLatestReply(from: normalizedTail)
+            TaskSessionTextToolkit.updateTaskPanelMemory(
+                promptNow: promptNow,
+                replyNow: replyNow,
+                stabilizedLifecycle: stabilized,
+                memory: &panelMem
+            )
+            taskPanelMemoryBySessionID[session.id] = panelMem
+
+            let panelSecondaryText: String = {
+                if stabilized == .inactiveTool {
+                    return analysis.secondaryText
+                }
+                return TaskSessionTextToolkit.composeTaskPanelSecondaryText(
+                    tail: normalizedTail,
+                    lifecycle: stabilized,
+                    promptNow: promptNow,
+                    replyNow: replyNow,
+                    memory: panelMem
+                )
+            }()
+            let detailText: String? = stabilized == .waitingInput
+                ? TaskSessionTextToolkit.composeWaitingInputDisplayText(
+                    interactionPrompt: analysis.interactionPrompt,
+                    interactionOptions: analysis.interactionOptions,
+                    fallback: panelSecondaryText
+                )
+                : nil
 
             next[session.id] = TaskSessionSnapshot(
                 sessionID: session.id,
@@ -68,8 +90,10 @@ final class TaskSessionEngine: ObservableObject {
                 lifecycle: stabilized,
                 renderTone: tone,
                 isRunning: running,
-                secondaryText: analysis.secondaryText,
+                secondaryText: panelSecondaryText,
+                detailText: detailText,
                 interactionOptions: analysis.interactionOptions,
+                interactionPrompt: analysis.interactionPrompt,
                 refreshedAt: now
             )
         }
@@ -78,7 +102,11 @@ final class TaskSessionEngine: ObservableObject {
     }
 
     private func resolveStrategy(for session: CapturedTerminalSession) -> any TaskSessionStrategy {
-        strategies.first(where: { $0.supports(session: session) }) ?? GenericTaskSessionStrategy()
+        if let match = strategies.first(where: { $0.supports(session: session) }) {
+            return match
+        }
+        return strategies.first(where: { $0.strategyID == "generic" }) ?? strategies.last
+            ?? TaskSessionStrategyRegistry.strategy(for: session)
     }
 
     private func renderTone(for state: TaskLifecycleState, fallback: TaskRenderTone) -> TaskRenderTone {

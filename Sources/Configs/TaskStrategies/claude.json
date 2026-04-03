@@ -6,15 +6,11 @@
     "titleContains": ["claude"],
     "titleRegex": [],
     "tailContains": [
-      "claude",
-      "claude code",
       "what should claude do",
       "what should claude do instead",
-      "interrupted",
       "billowing",
-      "sonnet",
-      "ask claude",
-      "esc to interrupt"
+      "sublimating",
+      "opus 4.6"
     ],
     "tailRegex": []
   },
@@ -50,6 +46,7 @@
         "confirm",
         "interrupted",
         "what should claude do instead",
+        "what should claude do",
         "[y/n]",
         "(y/n)",
         "please confirm",

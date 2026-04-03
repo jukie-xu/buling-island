@@ -7,16 +7,12 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
     case iTermLegacy = "iTerm"
     /// 系统自带「终端」(Terminal.app)
     case appleTerminal = "Terminal"
-    /// Tabby 终端（基于 Electron）
-    case tabby = "Tabby"
 
     /// `NSRunningApplication` / `System Events` 里的进程名。
     var processName: String {
         switch self {
         case .appleTerminal:
             return "Terminal"
-        case .tabby:
-            return "Tabby"
         default:
             return rawValue
         }
@@ -31,8 +27,6 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
             return ["com.googlecode.iterm"]
         case .appleTerminal:
             return ["com.apple.Terminal"]
-        case .tabby:
-            return ["org.tabby", "io.tabby", "app.tabby"]
         }
     }
 
@@ -55,8 +49,6 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
             return nil
         case .appleTerminal:
             return "com.apple.Terminal"
-        case .tabby:
-            return "org.tabby"
         }
     }
 
@@ -67,8 +59,6 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
             return "iTerm"
         case .appleTerminal:
             return "Terminal"
-        case .tabby:
-            return "Tabby"
         }
     }
 }

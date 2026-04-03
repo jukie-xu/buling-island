@@ -18,6 +18,13 @@ protocol TerminalSessionCaptureBackend: AnyObject, Sendable {
 
     /// 向目标会话注入输入（可选回车执行）。返回 false 表示当前后端不支持该能力。
     nonisolated func sendInput(nativeSessionId: String, terminalKind: TerminalKind, text: String, submit: Bool) -> Bool
+
+    /// 向目标会话注入更细粒度动作（文本、方向键、Esc 等）。
+    nonisolated func sendActions(
+        nativeSessionId: String,
+        terminalKind: TerminalKind,
+        actions: [TaskInteractionOption.Action]
+    ) -> Bool
 }
 
 extension TerminalSessionCaptureBackend {
@@ -26,6 +33,18 @@ extension TerminalSessionCaptureBackend {
         _ = terminalKind
         _ = text
         _ = submit
+        return false
+    }
+
+    nonisolated func sendActions(
+        nativeSessionId: String,
+        terminalKind: TerminalKind,
+        actions: [TaskInteractionOption.Action]
+    ) -> Bool {
+        guard !actions.isEmpty else { return false }
+        if actions.count == 1, case .text = actions[0].kind, let text = actions[0].text {
+            return sendInput(nativeSessionId: nativeSessionId, terminalKind: terminalKind, text: text, submit: false)
+        }
         return false
     }
 }

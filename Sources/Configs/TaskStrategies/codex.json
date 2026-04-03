@@ -19,7 +19,7 @@
       "• explored",
       "• edited",
       "• added",
-      "• working ("
+      "• working"
     ],
     "tailRegex": [
       "(?im)^\\s*•\\s*(ran|explored|edited|added|updated)\\b",
@@ -42,7 +42,11 @@
         "permission denied",
         "sandbox denied",
         "network access is restricted",
-        "rate limit",
+        "rate limit exceeded",
+        "rate limits exceeded",
+        "rate limit reached",
+        "rate limited",
+        "too many requests",
         "429",
         "exited with code",
         "报错",
@@ -52,7 +56,12 @@
       "tailRegex": [
         "(?im)^\\s*error:\\s+",
         "(?im)^\\s*test case .* failed",
-        "(?im)^\\s*xctassert[a-z]*\\("
+        "(?im)^\\s*xctassert[a-z]*\\(",
+        "(?i)\\brate[_ -]?limit(?:ed|s)?\\s*(?:exceeded|reached|exhausted|hit(?:ted)?|error)\\b",
+        "(?i)\\brate[_ -]?limited\\b",
+        "(?i)\\bhit\\s+(?:your|the\\s+)?rate[_ -]?limit",
+        "(?i)\\b429\\s+too many\\b",
+        "(?i)\\bhttp\\s*429\\b"
       ]
     },
     "waitingInput": {
@@ -60,6 +69,8 @@
       "titleRegex": [],
       "tailContains": [
         "would you like to run the following command?",
+        "how would you like codex to handle requests",
+        "which mode should codex use",
         "press enter to confirm or esc to cancel",
         "yes, proceed (y)",
         "don't ask again",
@@ -69,6 +80,8 @@
         "sandbox_permissions",
         "require_escalated",
         "do you want to allow",
+        "read only",
+        "full access",
         "[y/n]",
         "(y/n)",
         "请确认",
@@ -84,7 +97,7 @@
       "titleContains": [],
       "titleRegex": [],
       "tailContains": [
-        "• working (",
+        "• working",
         "esc to interrupt",
         "summarize recent commits",
         "exec_command",
@@ -99,7 +112,7 @@
         "应用补丁"
       ],
       "tailRegex": [
-        "(?im)^\\s*•\\s*working\\s*\\(",
+        "(?i)•\\s+working\\b",
         "(?im)^\\s*›\\s+",
         "(?im)^\\s*gpt-[0-9.]+-codex\\s+.*left\\s+·"
       ]

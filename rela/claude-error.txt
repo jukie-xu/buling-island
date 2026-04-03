@@ -1,0 +1,24 @@
+jukie@Jukies-MacBook-Pro-16-inc buling-island % claude
+╭─── Claude Code v2.1.72 ──────────────────────────────────────────────────────────────────────────────╮
+│                                  │ Tips for getting started                                          │
+│           Welcome back!          │ Run /init to create a CLAUDE.md file with instructions for Claude │
+│                                  │ ───────────────────────────────────────────────────────────────── │
+│              ▐▛███▜▌             │ Recent activity                                                   │
+│             ▝▜█████▛▘            │ No recent activity                                                │
+│               ▘▘ ▝▝              │                                                                   │
+│                                  │                                                                   │
+│   Opus 4.6 · API Usage Billing   │                                                                   │
+│       ~/git/buling-island        │                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+❯ hi
+  ⎿  401 {"error":{"message":"[trace_id: 2a8803db-81b1-4008-8c6e-407670e6cfb6] Validate Certification
+     failed","type":"invalid_request_error","param":"2a8803db-81b1-4008-8c6e-407670e6cfb6","code":"auth_error"}}
+     Retrying in 35 seconds… (attempt 7/10)
+
+✢ Sublimating… (39s)
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  🤖 Opus 4.6 | 📁 buling-island | 🌿 main ● | ⚡️ 0% · 0 tokens

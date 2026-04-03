@@ -4,7 +4,7 @@ import Foundation
 enum TerminalOutputStatusAnalyzer {
 
     static func analyzeStatus(text: String) -> (text: String, tone: String) {
-        let outputLines = normalizedOutputLines(from: text)
+        let outputLines = TaskSessionTextToolkit.normalizedOutputLines(from: text)
         let compact = outputLines.suffix(6).joined(separator: " ")
         let lower = compact.lowercased()
 
@@ -25,22 +25,6 @@ enum TerminalOutputStatusAnalyzer {
             return ("已完成: \(truncate(compact, max: 42))", "success")
         }
         return (truncate(compact, max: 42), "info")
-    }
-
-    private static func normalizedOutputLines(from text: String) -> [String] {
-        text
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .filter { !isUserInputCommandLine($0) }
-    }
-
-    private static func isUserInputCommandLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("❯") || trimmed.hasPrefix(">") {
-            return true
-        }
-        return false
     }
 
     private static func truncate(_ text: String, max: Int) -> String {

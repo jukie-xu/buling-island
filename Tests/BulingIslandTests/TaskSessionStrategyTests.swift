@@ -3,8 +3,12 @@ import XCTest
 
 final class TaskSessionStrategyTests: XCTestCase {
 
-    func testClaudeStrategySupportsClaudeSession() {
-        let s = ClaudeTaskSessionStrategy()
+    private func strategy(_ id: String) throws -> ConfigurableTaskSessionStrategy {
+        try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: id), "missing bundled strategy: \(id)")
+    }
+
+    func testClaudeStrategySupportsClaudeSession() throws {
+        let s = try strategy("claude")
         let session = CapturedTerminalSession(
             nativeSessionId: "1",
             backendIdentifier: "backend",
@@ -16,8 +20,8 @@ final class TaskSessionStrategyTests: XCTestCase {
         XCTAssertTrue(s.supports(session: session))
     }
 
-    func testCodexStrategySupportsCodexMarkers() {
-        let s = CodexTaskSessionStrategy()
+    func testCodexStrategySupportsCodexMarkers() throws {
+        let s = try strategy("codex")
         let session = CapturedTerminalSession(
             nativeSessionId: "2",
             backendIdentifier: "backend",
@@ -29,8 +33,8 @@ final class TaskSessionStrategyTests: XCTestCase {
         XCTAssertTrue(s.supports(session: session))
     }
 
-    func testCodexSupportNoLongerMatchesGenericAssistantWord() {
-        let s = CodexTaskSessionStrategy()
+    func testCodexSupportNoLongerMatchesGenericAssistantWord() throws {
+        let s = try strategy("codex")
         let session = CapturedTerminalSession(
             nativeSessionId: "2b",
             backendIdentifier: "backend",
@@ -42,9 +46,9 @@ final class TaskSessionStrategyTests: XCTestCase {
         XCTAssertFalse(s.supports(session: session))
     }
 
-    func testClaudeAndCodexCanClassifySameTailDifferently() {
-        let claude = ClaudeTaskSessionStrategy()
-        let codex = CodexTaskSessionStrategy()
+    func testClaudeAndCodexCanClassifySameTailDifferently() throws {
+        let claude = try strategy("claude")
+        let codex = try strategy("codex")
         let session = CapturedTerminalSession(
             nativeSessionId: "4",
             backendIdentifier: "backend",
@@ -61,8 +65,8 @@ final class TaskSessionStrategyTests: XCTestCase {
         XCTAssertEqual(codexState, .running)
     }
 
-    func testCodexWaitingIncludesInteractionOptions() {
-        let codex = CodexTaskSessionStrategy()
+    func testCodexWaitingIncludesInteractionOptions() throws {
+        let codex = try strategy("codex")
         let session = CapturedTerminalSession(
             nativeSessionId: "5",
             backendIdentifier: "backend",
@@ -79,25 +83,27 @@ final class TaskSessionStrategyTests: XCTestCase {
         let result = codex.analyze(session: session)
 
         XCTAssertEqual(result.lifecycle, .waitingInput)
-        XCTAssertEqual(result.interactionOptions.map(\.input), ["y", "n"])
+        XCTAssertEqual(result.interactionOptions.map(\.input), ["y", ""])
+        XCTAssertEqual(result.interactionPrompt?.title, "do you want to allow this action?")
+        XCTAssertEqual(result.interactionPrompt?.selectionMode, .single)
     }
 
     @MainActor
-    func testEngineChoosesHigherPriorityStrategy() {
+    func testEngineChoosesHigherPriorityStrategy() throws {
+        let generic = try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: "generic"))
+        let codex = try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: "codex"))
+
         let session = CapturedTerminalSession(
             nativeSessionId: "3",
             backendIdentifier: "backend",
             terminalKind: .iTerm2,
             title: "codex workspace",
             tty: "ttys003",
-            tailOutput: "running"
+            tailOutput: "• working (tests)"
         )
 
-        let engine = TaskSessionEngine(strategies: [
-            GenericTaskSessionStrategy(),
-            CodexTaskSessionStrategy(),
-        ])
-        engine.refresh(sessions: [session], activeSessionIDs: [session.id], now: Date(timeIntervalSince1970: 1000))
+        let engine = TaskSessionEngine(strategies: [generic, codex])
+        engine.refresh(sessions: [session], now: Date(timeIntervalSince1970: 1000))
 
         let snap = engine.snapshotsBySessionID[session.id]
         XCTAssertNotNil(snap)

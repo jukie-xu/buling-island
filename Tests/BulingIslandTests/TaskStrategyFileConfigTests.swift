@@ -109,4 +109,49 @@ final class TaskStrategyFileConfigTests: XCTestCase {
         let result = claude.analyze(session: session)
         XCTAssertEqual(result.lifecycle, .running)
     }
+
+    func testBundledCodexDoesNotTreatMarketingRateLimitsTipAsError() {
+        let strategies = TaskStrategyFileLoader.loadConfiguredStrategies()
+        guard let codex = strategies.first(where: { $0.strategyID == "codex" }) else {
+            XCTFail("missing bundled codex strategy")
+            return
+        }
+
+        let session = CapturedTerminalSession(
+            nativeSessionId: "codex-tip",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "codex",
+            tty: "ttys003",
+            tailOutput: """
+              Tip: New Try the Codex App with 2x rate limits until April 2nd.
+            gpt-5.4 medium · 100% left · ~/git/buling-island
+            """
+        )
+
+        let result = codex.analyze(session: session)
+        XCTAssertNotEqual(result.lifecycle, .error)
+        // 仅有 Tip + 空闲态脚注 `gpt-x.x medium · n% left ·` 时不应判为 running（该脚注在无 • working 时一直存在）。
+        XCTAssertEqual(result.lifecycle, .idle)
+    }
+
+    func testBundledCodexStillDetectsRateLimitExceeded() {
+        let strategies = TaskStrategyFileLoader.loadConfiguredStrategies()
+        guard let codex = strategies.first(where: { $0.strategyID == "codex" }) else {
+            XCTFail("missing bundled codex strategy")
+            return
+        }
+
+        let session = CapturedTerminalSession(
+            nativeSessionId: "codex-429",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "codex",
+            tty: "ttys004",
+            tailOutput: "Error: Rate limit exceeded. Try again in 30s."
+        )
+
+        let result = codex.analyze(session: session)
+        XCTAssertEqual(result.lifecycle, .error)
+    }
 }

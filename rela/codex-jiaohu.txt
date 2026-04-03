@@ -1,0 +1,1066 @@
+    1098 +
+    1099 +        let groupRows = rows.filter { !pinnedRowIDs.contains($0.session.id) }
+    1100 +        let captured = Dictionary(grouping: groupRows) { row in
+    1101 +            let app = row.session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    1102 +            if app.isEmpty { return "iTerm" }
+    1103 +            return app
+    1104 +        }
+    1105 +
+    1106 +        let orderedNames = ["iTerm", "Terminal"]
+    1107 +        var result: [TaskBoardGroup] = []
+    1108 +        if !pinnedRows.isEmpty {
+    1109 +            result.append(
+    1110 +                TaskBoardGroup(
+    1111 +                    id: "task-group-pinned",
+    1112 +                    name: "置顶",
+    1113 +                    isPinned: true,
+    1114 +                    tasks: pinnedRows
+    1115 +                )
+    1116 +            )
+    1117 +        }
+    1118 +
+    1119 +        for name in orderedNames where captured[name] != nil {
+    1120 +            result.append(
+    1121 +                TaskBoardGroup(
+    1122 +                    id: "task-group-\(name)",
+    1123 +                    name: name,
+    1124 +                    isPinned: false,
+    1125 +                    tasks: sortedRowsForGroup(captured[name] ?? [], groupName: name)
+    1126 +                )
+    1127 +            )
+    1128 +        }
+    1129 +
+    1130 +        let otherNames = captured.keys
+    1131 +            .filter { !orderedNames.contains($0) }
+    1132 +            .sorted()
+    1133 +        for name in otherNames {
+    1134 +            result.append(
+    1135 +                TaskBoardGroup(
+    1136 +                    id: "task-group-\(name)",
+    1137 +                    name: name,
+    1138 +                    isPinned: false,
+    1139 +                    tasks: sortedRowsForGroup(captured[name] ?? [], groupName: name)
+    1140 +                )
+    1141 +            )
+    1142 +        }
+    1143 +        return result
+    1144 +    }
+    1145 +
+    1146 +    private func sortedRowsForGroup(_ rows: [TaskBoardRow], groupName: String) -> [TaskBoardRow] {
+    1147 +        var rowsByBucket: [TaskSortBucket: [TaskBoardRow]] = [:]
+    1148 +        for row in rows {
+    1149 +            rowsByBucket[taskSortBucket(for: row.snapshot), default: []].append(row)
+    1150 +        }
+    1151 +        let bucketOrder: [TaskSortBucket] = [.abnormal, .running, .completed, .notRunning]
+    1152 +        var output: [TaskBoardRow] = []
+    1153 +        for bucket in bucketOrder {
+    1154 +            let baseRows = (rowsByBucket[bucket] ?? []).sorted {
+    1155 +                $0.session.title.localizedStandardCompare($1.session.title) == .orderedAscending
+    1156 +            }
+    1157 +            let key = taskGroupBucketStorageKey(groupName: groupName, bucket: bucket)
+    1158 +            let orderedIDs = taskPanelOrderByGroupBucket[key] ?? []
+    1159 +            output.append(contentsOf: applyCustomOrder(baseRows, orderedIDs: orderedIDs))
+    1160 +        }
+    1161 +        return output
+    1162 +    }
+    1163 +
+    1164 +    private func applyCustomOrder(_ rows: [TaskBoardRow], orderedIDs: [String]) -> [TaskBoardRow] {
+    1165 +        let byID = Dictionary(uniqueKeysWithValues: rows.map { ($0.session.id, $0) })
+    1166 +        var result: [TaskBoardRow] = []
+    1167 +        var used = Set<String>()
+    1168 +        for id in orderedIDs {
+    1169 +            guard let row = byID[id] else { continue }
+    1170 +            result.append(row)
+    1171 +            used.insert(id)
+    1172 +        }
+    1173 +        for row in rows where !used.contains(row.session.id) {
+    1174 +            result.append(row)
+    1175 +        }
+    1176 +        return result
+    1177 +    }
+    1178 +
+    1179 +    private func taskSortBucket(for snapshot: TaskSessionSnapshot) -> TaskSortBucket {
+    1180 +        switch snapshot.lifecycle {
+    1181 +        case .error, .waitingInput:
+    1182 +            return .abnormal
+    1183 +        case .running:
+    1184 +            return .running
+    1185 +        case .success:
+    1186 +            return .completed
+    1187 +        case .idle, .inactiveTool:
+    1188 +            return .notRunning
+    1189 +        }
+    1190 +    }
+    1191 +
+    1192 +    private func taskGroupBucketStorageKey(groupName: String, bucket: TaskSortBucket) -> String {
+    1193 +        "\(groupName)|\(bucket.rawValue)"
+    1194 +    }
+    1195 +
+    1196 +    private func taskBoardRowView(item: TaskBoardRow, in group: TaskBoardGroup) -> some View {
+    1197 +        let task = item.session
+    1198 +        let snap = item.snapshot
+    1199 +        let isMuted = terminalCapture.isSessionMuted(task.id)
+    1200 +        let isPinned = taskPanelPinnedSessionIDs.contains(task.id)
+    1201 +        let bucket = group.isPinned ? TaskSortBucket.pinned : taskSortBucket(for: snap)
+    1202 +
+    1203 +        return VStack(alignment: .leading, spacing: 7) {
+    1204 +            HStack(alignment: .center, spacing: 8) {
+    1205 +                Circle()
+    1206 +                    .fill(taskIndicatorColor(tone: snap.renderTone))
+    1207 +                    .frame(width: 9, height: 9)
+    1208 +                    .shadow(color: taskIndicatorColor(tone: snap.renderTone).opacity(0.55), radius: snap.isRunning ? 4 : 1, x: 0, y: 0)
+    1209 +                    .opacity(taskBreathPhase ? 1 : 0.7)
+    1210 +                    .scaleEffect(taskBreathPhase ? 1 : 0.84)
+    1211 +
+    1212 +                if isMuted {
+    1213 +                    Image(systemName: "speaker.slash.fill")
+    1214 +                        .font(.system(size: 10, weight: .semibold))
+    1215 +                        .foregroundStyle(.white.opacity(0.45))
+    1216 +                }
+    1217 +
+    1218 +                Text(task.title.isEmpty ? "Claude 任务" : task.title)
+    1219 +                    .font(.system(size: taskFontBase, weight: .semibold))
+    1220 +                    .foregroundStyle(.white.opacity(isMuted ? 0.82 : 0.93))
+    1221 +                    .lineLimit(1)
+    1222 +
+    1223 +                Spacer(minLength: 6)
+    1224 +
+    1225 +                Image(systemName: "line.3.horizontal")
+    1226 +                    .font(.system(size: 11, weight: .semibold))
+    1227 +                    .foregroundStyle(.white.opacity(0.5))
+    1228 +                    .help("拖动可排序")
+    1229 +
+    1230 +                Button {
+    1231 +                    toggleTaskPinned(task.id)
+    1232 +                } label: {
+    1233 +                    Image(systemName: isPinned ? "pin.fill" : "pin")
+    1234 +                        .font(.system(size: 11, weight: .semibold))
+    1235 +                        .foregroundStyle(.white.opacity(isPinned ? 0.92 : 0.62))
+    1236 +                }
+    1237 +                .buttonStyle(.plain)
+    1238 +                .help(isPinned ? "取消置顶" : "全局置顶")
+    1239 +
+    1240 +                HStack(spacing: 6) {
+    1241 +                    Toggle(
+    1242 +                        "Mute",
+    1243 +                        isOn: Binding(
+    1244 +                            get: { isMuted },
+    1245 +                            set: { terminalCapture.setSessionMuted($0, sessionID: task.id) }
+    1246 +                        )
+    1247 +                    )
+    1248 +                    .toggleStyle(.switch)
+    1249 +                    .controlSize(.mini)
+    1250 +                    .tint(isMuted ? Color(red: 0.33, green: 0.46, blue: 0.62) : Color(white: 0.22))
+    1251 +                    .labelsHidden()
+    1252 +                    .help("静音该会话：不再在 pill 提醒")
+    1253 +
+    1254 +                    Text("Mute")
+    1255 +                        .font(.system(size: max(8, taskFontBase - 3), weight: .semibold))
+    1256 +                        .foregroundStyle(.white.opacity(isMuted ? 0.94 : 0.55))
+    1257 +                }
+    1258 +                .padding(.horizontal, 6)
+    1259 +                .padding(.vertical, 3)
+    1260 +                .background(
+    1261 +                    Capsule(style: .continuous)
+    1262 +                        .fill(isMuted ? Color(red: 0.20, green: 0.26, blue: 0.33).opacity(0.9) : Color.white.opacity(0.07))
+    1263 +                )
+    1264 +            }
+    1265 +
+    1266 +            Text(snap.secondaryText)
+    1267 +                .font(.system(size: taskFontBase, weight: .medium))
+    1268 +                .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
+    1269 +                .lineLimit(2)
+    1270 +                .truncationMode(.tail)
+    1271 +
+    1272 +            HStack(spacing: 6) {
+    1273 +                Text(snap.strategyDisplayName)
+    1274 +                Text("·")
+    1275 +                Text(task.terminalKind.rawValue)
+    1276 +                Text("·")
+    1277 +                Text(task.tty.isEmpty ? "tty 未知" : task.tty)
+    1278 +            }
+    1279 +            .font(.system(size: max(9, taskFontBase - 2), weight: .medium))
+    1280 +            .foregroundStyle(.white.opacity(isMuted ? 0.45 : 0.52))
+    1281 +            .lineLimit(1)
+    1282 +        }
+    1283 +        .padding(.horizontal, 12)
+    1284 +        .padding(.vertical, 10)
+    1285 +        .frame(maxWidth: .infinity, alignment: .leading)
+    1286 +        .background(
+    1287 +            RoundedRectangle(cornerRadius: 10, style: .continuous)
+    1288 +                .fill(taskRowBackgroundColor(tone: snap.renderTone, isMuted: isMuted))
+    1289 +                .overlay {
+    1290 +                    if snap.isRunning {
+    1291 +                        taskRunningWaveOverlay(isMuted: isMuted)
+    1292 +                    }
+    1293 +                }
+    1294 +                .overlay(
+    1295 +                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+    1296 +                        .strokeBorder(taskRowBorderColor(tone: snap.renderTone, isMuted: isMuted), lineWidth: 1)
+    1297 +                )
+    1298 +        )
+    1299 +        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    1300 +        .onTapGesture {
+    1301 +            jumpToExternalTask(session: task)
+    1302 +        }
+    1303 +        .onDrag {
+    1304 +            taskPanelDraggingSessionID = task.id
+    1305 +            taskPanelDraggingGroupName = group.name
+    1306 +            taskPanelDraggingBucket = bucket
+    1307 +            return NSItemProvider(object: NSString(string: task.id))
+    1308 +        }
+    1309 +        .onDrop(of: [UTType.text.identifier], isTargeted: nil) { _, _ in
+    1310 +            handleTaskDrop(
+    1311 +                destinationSessionID: task.id,
+    1312 +                destinationGroupName: group.name,
+    1313 +                destinationBucket: bucket,
+    1314 +                destinationIsPinnedGroup: group.isPinned
+    1315 +            )
+    1316 +        }
+    1317 +    }
+    1318 +
+    1319 +    private func handleTaskDrop(
+    1320 +        destinationSessionID: String,
+    1321 +        destinationGroupName: String,
+    1322 +        destinationBucket: TaskSortBucket,
+    1323 +        destinationIsPinnedGroup: Bool
+    1324 +    ) -> Bool {
+    1325 +        defer {
+    1326 +            taskPanelDraggingSessionID = nil
+    1327 +            taskPanelDraggingGroupName = nil
+    1328 +            taskPanelDraggingBucket = nil
+    1329 +        }
+    1330 +        guard let draggingID = taskPanelDraggingSessionID,
+    1331 +              let draggingGroup = taskPanelDraggingGroupName,
+    1332 +              let draggingBucket = taskPanelDraggingBucket,
+    1333 +              draggingID != destinationSessionID else {
+    1334 +            return false
+    1335 +        }
+    1336 +
+    1337 +        if destinationIsPinnedGroup {
+    1338 +            guard taskPanelPinnedSessionIDs.contains(draggingID),
+    1339 +                  taskPanelPinnedSessionIDs.contains(destinationSessionID),
+    1340 +                  draggingGroup == destinationGroupName else {
+    1341 +                return false
+    1342 +            }
+    1343 +            var ids = taskPanelPinnedOrder.filter { taskPanelPinnedSessionIDs.contains($0) }
+    1344 +            guard let from = ids.firstIndex(of: draggingID),
+    1345 +                  let to = ids.firstIndex(of: destinationSessionID) else {
+    1346 +                return false
+    1347 +            }
+    1348 +            moveElement(in: &ids, from: from, to: to)
+    1349 +            taskPanelPinnedOrder = ids
+    1350 +            persistTaskPanelSortState()
+    1351 +            return true
+    1352 +        }
+    1353 +
+    1354 +        guard draggingGroup == destinationGroupName,
+    1355 +              draggingBucket == destinationBucket,
+    1356 +              destinationBucket != .pinned else {
+    1357 +            return false
+    1358 +        }
+    1359 +
+    1360 +        let key = taskGroupBucketStorageKey(groupName: destinationGroupName, bucket: destinationBucket)
+    1361 +        var ids = taskPanelOrderByGroupBucket[key] ?? []
+    1362 +        if !ids.contains(draggingID) {
+    1363 +            ids.append(draggingID)
+    1364 +        }
+    1365 +        if !ids.contains(destinationSessionID) {
+    1366 +            ids.append(destinationSessionID)
+    1367 +        }
+    1368 +        guard let from = ids.firstIndex(of: draggingID),
+    1369 +              let to = ids.firstIndex(of: destinationSessionID) else {
+    1370 +            return false
+    1371 +        }
+    1372 +        moveElement(in: &ids, from: from, to: to)
+    1373 +        taskPanelOrderByGroupBucket[key] = ids
+    1374 +        persistTaskPanelSortState()
+    1375 +        return true
+    1376 +    }
+    1377 +
+    1378 +    private func moveElement(in ids: inout [String], from: Int, to: Int) {
+    1379 +        guard ids.indices.contains(from), ids.indices.contains(to), from != to else { return }
+    1380 +        let item = ids.remove(at: from)
+    1381 +        ids.insert(item, at: to)
+    1382 +    }
+    1383 +
+    1384 +    private func toggleTaskPinned(_ sessionID: String) {
+    1385 +        if taskPanelPinnedSessionIDs.contains(sessionID) {
+    1386 +            taskPanelPinnedSessionIDs.remove(sessionID)
+    1387 +            taskPanelPinnedOrder.removeAll { $0 == sessionID }
+    1388 +        } else {
+    1389 +            taskPanelPinnedSessionIDs.insert(sessionID)
+    1390 +            if !taskPanelPinnedOrder.contains(sessionID) {
+    1391 +                taskPanelPinnedOrder.append(sessionID)
+    1392 +            }
+    1393 +        }
+    1394 +        reconcileTaskPanelSortStateWithLiveSessions()
+    1395 +        persistTaskPanelSortState()
+    1396 +    }
+    1397 +
+    1398 +    private static let taskPanelPinnedSessionIDsDefaultsKey = "taskPanel.pinned.sessionIDs.v1"
+    1399 +    private static let taskPanelPinnedOrderDefaultsKey = "taskPanel.pinned.order.v1"
+    1400 +    private static let taskPanelGroupBucketOrderDefaultsKey = "taskPanel.groupBucket.order.v1"
+    1401 +
+    1402 +    private func loadTaskPanelSortStateIfNeeded() {
+    1403 +        guard !taskPanelSortStateLoaded else { return }
+    1404 +        taskPanelSortStateLoaded = true
+    1405 +        let defaults = UserDefaults.standard
+    1406 +        if let pinned = defaults.array(forKey: Self.taskPanelPinnedSessionIDsDefaultsKey) as? [String] {
+    1407 +            taskPanelPinnedSessionIDs = Set(pinned)
+    1408 +        }
+    1409 +        if let order = defaults.array(forKey: Self.taskPanelPinnedOrderDefaultsKey) as? [String] {
+    1410 +            taskPanelPinnedOrder = order
+    1411 +        }
+    1412 +        if let map = defaults.dictionary(forKey: Self.taskPanelGroupBucketOrderDefaultsKey) as? [String: [String]] {
+    1413 +            taskPanelOrderByGroupBucket = map
+    1414 +        }
+    1415 +        reconcileTaskPanelSortStateWithLiveSessions()
+    1416 +    }
+    1417 +
+    1418 +    private func persistTaskPanelSortState() {
+    1419 +        let defaults = UserDefaults.standard
+    1420 +        defaults.set(Array(taskPanelPinnedSessionIDs), forKey: Self.taskPanelPinnedSessionIDsDefaultsKey)
+    1421 +        defaults.set(taskPanelPinnedOrder, forKey: Self.taskPanelPinnedOrderDefaultsKey)
+    1422 +        defaults.set(taskPanelOrderByGroupBucket, forKey: Self.taskPanelGroupBucketOrderDefaultsKey)
+    1423 +    }
+    1424 +
+    1425 +    private func reconcileTaskPanelSortStateWithLiveSessions() {
+    1426 +        guard taskPanelSortStateLoaded else { return }
+    1427 +        let liveIDs = Set(terminalCapture.sessions.map(\.id))
+    1428 +
+    1429 +        taskPanelPinnedSessionIDs = taskPanelPinnedSessionIDs.intersection(liveIDs)
+    1430 +        taskPanelPinnedOrder = taskPanelPinnedOrder.filter { taskPanelPinnedSessionIDs.contains($0) }
+    1431 +
+    1432 +        var cleaned: [String: [String]] = [:]
+    1433 +        for (key, ids) in taskPanelOrderByGroupBucket {
+    1434 +            let kept = ids.filter { liveIDs.contains($0) && !taskPanelPinnedSessionIDs.contains($0) }
+    1435 +            if !kept.isEmpty {
+    1436 +                cleaned[key] = kept
+    1437 +            }
+    1438 +        }
+    1439 +        taskPanelOrderByGroupBucket = cleaned
+    1440 +        persistTaskPanelSortState()
+    1441 +    }
+    1442 +
+    1443 +    private func taskLifecycleRank(_ state: TaskLifecycleState) -> Int {
+    1444 +        switch state {
+    1445 +        case .error: return 6
+    1446 +        case .waitingInput: return 5
+    1447 +        case .running: return 4
+    1448 +        case .success: return 3
+    1449 +        case .idle: return 2
+    1450 +        case .inactiveTool: return 1
+    1451 +        }
+    1452 +    }
+    1453 +
+    1454 +    private func taskGroupDisplayName(for session: CapturedTerminalSession) -> String {
+    1455 +        let app = session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    1456 +        if app.isEmpty {
+    1457 +            return "iTerm"
+    1458 +        }
+    1459 +        return app
+    1460 +    }
+    1461 +
+    1462 +    private var taskLifecycleOrderByTitle: [TaskLifecycleState] {
+    1463 +        [.error, .waitingInput, .running, .success, .idle, .inactiveTool]
+    1464 +    }
+    1465 +
+    1466 +    private var taskLifecycleOrderDescription: String {
+    1467 +        let labels = taskLifecycleOrderByTitle.map { state -> String in
+    1468 +            switch state {
+    1469 +            case .error:
+    1470 +                return "异常"
+    1471 +            case .waitingInput:
+    1472 +                return "等待输入"
+    1473 +            case .running:
+    1474 +                return "运行中"
+    1475 +            case .success:
+    1476 +                return "已完成"
+    1477 +            case .idle:
+    1478 +                return "未运行"
+    1479 +            case .inactiveTool:
+    1480 +                return "未激活"
+    1481 +            }
+    1482 +        }
+    1483 +        return labels.joined(separator: " > ")
+    1484 +    }
+    1485 +
+    1486 +    private func taskDisplayStatusText(for snapshot: TaskSessionSnapshot) -> String {
+    1487 +        switch snapshot.lifecycle {
+    1488 +        case .error:
+    1489 +            return "异常"
+    1490 +        case .waitingInput:
+    1491 +            return "异常（等待输入）"
+    1492 +        case .running:
+    1493 +            return "运行中"
+    1494 +        case .success:
+    1495 +            return "已完成"
+    1496 +        case .idle:
+    1497 +            return "未运行"
+    1498 +        case .inactiveTool:
+    1499 +            return "未激活"
+    1500 +        }
+    1501 +    }
+    1502 +
+    1503 +    private func taskSortPriority(for snapshot: TaskSessionSnapshot) -> Int {
+    1504 +        switch snapshot.lifecycle {
+    1505 +        case .error:
+    1506 +            return 4
+    1507 +        case .waitingInput:
+    1508 +            return 4
+    1509 +        case .running:
+    1510 +            return 3
+    1511 +        case .success:
+    1512 +            return 2
+    1513 +        case .idle, .inactiveTool:
+    1514 +            return 1
+    1515 +        }
+    1516 +    }
+    1517 +
+    1518 +    private func taskSortPriorityText(for snapshot: TaskSessionSnapshot) -> String {
+    1519 +        switch taskSortPriority(for: snapshot) {
+    1520 +        case 4:
+    1521 +            return "P1"
+    1522 +        case 3:
+    1523 +            return "P2"
+    1524 +        case 2:
+    1525 +            return "P3"
+    1526 +        default:
+    1527 +            return "P4"
+    1528 +        }
+    1529 +    }
+    1530 +
+    1531 +    private func taskIsHighPriority(_ snapshot: TaskSessionSnapshot) -> Bool {
+    1532 +        taskSortPriority(for: snapshot) >= 3
+    1533 +    }
+    1534 +
+    1535 +    private func taskSortHint(for snapshot: TaskSessionSnapshot) -> String {
+    1536 +        let status = taskDisplayStatusText(for: snapshot)
+    1537 +        let level = taskSortPriorityText(for: snapshot)
+    1538 +        return "\(status) · \(level)"
+    1539 +    }
+    1540 +
+    1541 +    private func taskSortableScopeLabel(group: TaskBoardGroup) -> String {
+    1542 +        if group.isPinned {
+    1543 +            return "置顶组内排序"
+    1544 +        }
+    1545 +        return "\(group.name) 组内排序"
+    1546 +    }
+    1547 +
+    1548 +    private func taskStatusHeaderText(group: TaskBoardGroup) -> String {
+    1549 +        if group.isPinned {
+    1550 +            return "全局置顶（不受状态排序影响）"
+    1551 +        }
+    1552 +        return "状态优先级：异常 > 运行中 > 已完成 > 未运行（同状态按拖拽顺序）"
+    1553 +    }
+    1554 +
+    1555 +    private func taskGroupAllowsDrop(fromGroup: String?, toGroup: TaskBoardGroup) -> Bool {
+    1556 +        guard let fromGroup else { return false }
+    1557 +        return fromGroup == toGroup.name
+    1558 +    }
+    1559 +
+    1560 +    private func taskCanReorderAcrossBuckets(from: TaskSortBucket?, to: TaskSortBucket) -> Bool {
+    1561 +        guard let from else { return false }
+    1562 +        return from == to
+    1563 +    }
+    1564 +
+    1565 +    private func taskShouldShowStatusPriorityTag(_ snapshot: TaskSessionSnapshot) -> Bool {
+    1566 +        taskIsHighPriority(snapshot)
+    1567 +    }
+    1568 +
+    1569 +    private func taskStatusTagColor(_ snapshot: TaskSessionSnapshot) -> Color {
+    1570 +        switch taskSortBucket(for: snapshot) {
+    1571 +        case .abnormal:
+    1572 +            return Color.red.opacity(0.85)
+    1573 +        case .running:
+    1574 +            return Color.green.opacity(0.85)
+    1575 +        case .completed:
+    1576 +            return Color.blue.opacity(0.85)
+    1577 +        case .notRunning, .pinned:
+    1578 +            return Color.gray.opacity(0.7)
+    1579 +        }
+    1580 +    }
+    1581 +
+    1582 +    private func taskRowSubtitle(_ item: TaskBoardRow) -> String {
+    1583 +        item.snapshot.secondaryText
+    1584 +    }
+    1585 +
+    1586 +    private func taskRowMeta(_ item: TaskBoardRow) -> String {
+    1587 +        let task = item.session
+    1588 +        return "\(item.snapshot.strategyDisplayName) · \(task.terminalKind.rawValue) · \(task.tty.isEmpty ? "tty 未知" : task.tty)"
+    1589 +    }
+    1590 +
+    1591 +    private func taskGroupSubtitle(_ group: TaskBoardGroup) -> String {
+    1592 +        group.isPinned ? "全局置顶组（可拖拽排序）" : "仅限 \(group.name) 终端组内拖拽"
+    1593 +    }
+    1594 +
+    1595 +    private func taskGroupPinnedBadge(_ group: TaskBoardGroup) -> String? {
+    1596 +        group.isPinned ? "Pinned" : nil
+    1597 +    }
+    1598 +
+    1599 +    private func taskGroupSortRuleBadge(_ group: TaskBoardGroup) -> String {
+    1600 +        group.isPinned ? "手动排序" : "状态 + 手动"
+    1601 +    }
+    1602 +
+    1603 +    private func taskGroupTrailingHint(_ group: TaskBoardGroup) -> String {
+    1604 +        group.isPinned ? "不会随状态变动" : "不可跨终端拖动"
+    1605 +    }
+    1606 +
+    1607 +    private func taskGroupDropValidation(fromGroupName: String?, to group: TaskBoardGroup, fromBucket: TaskSortBucket?, toBucket: TaskSortBucket) -> Bool {
+    1608 +        guard taskGroupAllowsDrop(fromGroup: fromGroupName, toGroup: group) else { return false }
+    1609 +        if group.isPinned { return true }
+    1610 +        return taskCanReorderAcrossBuckets(from: fromBucket, to: toBucket)
+    1611 +    }
+    1612 +
+    1613 +    private func taskSortBucketDescription(_ bucket: TaskSortBucket) -> String {
+    1614 +        switch bucket {
+    1615 +        case .abnormal:
+    1616 +            return "异常"
+    1617 +        case .running:
+    1618 +            return "运行中"
+    1619 +        case .completed:
+    1620 +            return "已完成"
+    1621 +        case .notRunning:
+    1622 +            return "未运行"
+    1623 +        case .pinned:
+    1624 +            return "置顶"
+    1625 +        }
+    1626 +    }
+    1627 +
+    1628 +    private func taskCanDropCurrentDraggingTask(into group: TaskBoardGroup, bucket: TaskSortBucket) -> Bool {
+    1629 +        taskGroupDropValidation(
+    1630 +            fromGroupName: taskPanelDraggingGroupName,
+    1631 +            to: group,
+    1632 +            fromBucket: taskPanelDraggingBucket,
+    1633 +            toBucket: bucket
+    1634 +        )
+    1635 +    }
+    1636 +
+    1637 +    private func taskGroupSortSummary(_ group: TaskBoardGroup) -> String {
+    1638 +        if group.isPinned {
+    1639 +            return "按拖拽顺序展示"
+    1640 +        }
+    1641 +        return "先按状态，再按拖拽顺序"
+    1642 +    }
+    1643 +
+    1644 +    private func taskGroupScopeSummary(_ group: TaskBoardGroup) -> String {
+    1645 +        group.isPinned ? "跨终端收敛" : "仅当前终端"
+    1646 +    }
+    1647 +
+    1648 +    private func taskOrderRuleSummaryText() -> String {
+    1649 +        "异常 > 运行中 > 已完成 > 未运行；同状态按拖拽顺序"
+    1650 +    }
+    1651 +
+    1652 +    private func taskPinRuleSummaryText() -> String {
+    1653 +        "置顶任务移入置顶组，且不受状态排序影响"
+    1654 +    }
+    1655 +
+    1656 +    private func taskCanMoveInsideGroup(_ group: TaskBoardGroup) -> Bool {
+    1657 +        !group.tasks.isEmpty
+    1658 +    }
+    1659 +
+    1660 +    private func taskSupportsBucket(_ group: TaskBoardGroup, bucket: TaskSortBucket) -> Bool {
+    1661 +        if group.isPinned {
+    1662 +            return bucket == .pinned
+    1663 +        }
+    1664 +        return bucket != .pinned
+    1665 +    }
+    1666 +
+    1667 +    private func taskNormalizePinnedOrder(with liveRows: [TaskBoardRow]) -> [TaskBoardRow] {
+    1668 +        let byID = Dictionary(uniqueKeysWithValues: liveRows.map { ($0.session.id, $0) })
+    1669 +        return taskPanelPinnedOrder.compactMap { byID[$0] }
+    1670 +    }
+    1671 +
+    1672 +    private func taskFilteredRowsExcludingPinned(_ rows: [TaskBoardRow]) -> [TaskBoardRow] {
+    1673 +        rows.filter { !taskPanelPinnedSessionIDs.contains($0.session.id) }
+    1674 +    }
+    1675 +
+    1676 +    private func taskNonPinnedGroupNames(from rows: [TaskBoardRow]) -> [String] {
+    1677 +        let names = Set(rows.map { taskGroupDisplayName(for: $0.session) })
+    1678 +        let preferred = ["iTerm", "Terminal"]
+    1679 +        let preferredPresent = preferred.filter { names.contains($0) }
+    1680 +        let others = names.filter { !preferred.contains($0) }.sorted()
+    1681 +        return preferredPresent + others
+    1682 +    }
+    1683 +
+    1684 +    private func taskRows(in groupName: String, from rows: [TaskBoardRow]) -> [TaskBoardRow] {
+    1685 +        rows.filter { taskGroupDisplayName(for: $0.session) == groupName }
+    1686 +    }
+    1687 +
+    1688 +    private func taskGroupSection(groupName: String, rows: [TaskBoardRow]) -> TaskBoardGroup {
+    1689 +        TaskBoardGroup(
+    1690 +            id: "task-group-\(groupName)",
+    1691 +            name: groupName,
+    1692 +            isPinned: false,
+    1693 +            tasks: sortedRowsForGroup(rows, groupName: groupName)
+    1694 +        )
+    1695 +    }
+    1696 +
+    1697 +    private func taskPinnedGroupSection(rows: [TaskBoardRow]) -> TaskBoardGroup {
+    1698 +        TaskBoardGroup(
+    1699 +            id: "task-group-pinned",
+    1700 +            name: "置顶",
+    1701 +            isPinned: true,
+    1702 +            tasks: rows
+    1703 +        )
+    1704 +    }
+    1705 +
+    1706 +    private func taskHasPinnedGroup(_ groups: [TaskBoardGroup]) -> Bool {
+    1707 +        groups.contains(where: { $0.isPinned })
+    1708 +    }
+    1709 +
+    1710 +    private func taskIsPinnedGroup(_ group: TaskBoardGroup) -> Bool {
+    1711 +        group.isPinned
+    1712 +    }
+    1713 +
+    1714 +    private func taskGroupCountText(_ group: TaskBoardGroup) -> String {
+    1715 +        "\(group.tasks.count) 个任务"
+    1716 +    }
+    1717 +
+    1718 +    private func taskGroupNameText(_ group: TaskBoardGroup) -> String {
+    1719 +        group.name
+    1720 +    }
+    1721 +
+    1722 +    private func taskSortBucketForRow(_ item: TaskBoardRow, in group: TaskBoardGroup) -> TaskSortBucket {
+    1723 +        group.isPinned ? .pinned : taskSortBucket(for: item.snapshot)
+    1724 +    }
+    1725 +
+    1726 +    private func taskRowIsPinned(_ item: TaskBoardRow) -> Bool {
+    1727 +        taskPanelPinnedSessionIDs.contains(item.session.id)
+    1728 +    }
+    1729 +
+    1730 +    private func taskDragPayload(for sessionID: String) -> NSItemProvider {
+    1731 +        NSItemProvider(object: NSString(string: sessionID))
+    1732 +    }
+    1733 +
+    1734 +    private func taskRowCanDrop(on destinationSessionID: String, in group: TaskBoardGroup, bucket: TaskSortBucket) -> Bool {
+    1735 +        guard destinationSessionID != taskPanelDraggingSessionID else { return false }
+    1736 +        return taskCanDropCurrentDraggingTask(into: group, bucket: bucket)
+    1737 +    }
+    1738 +
+    1739 +    private func taskNormalizeGroupBucketOrderStorage() {
+    1740 +        var normalized: [String: [String]] = [:]
+    1741 +        for (key, ids) in taskPanelOrderByGroupBucket {
+    1742 +            let deduped = Array(NSOrderedSet(array: ids)) as? [String] ?? ids
+    1743 +            if !deduped.isEmpty {
+    1744 +                normalized[key] = deduped
+    1745 +            }
+    1746 +        }
+    1747 +        taskPanelOrderByGroupBucket = normalized
+    1748 +    }
+    1749 +
+    1750 +    private func taskValidatePinnedOrderStorage() {
+    1751 +        taskPanelPinnedOrder = Array(NSOrderedSet(array: taskPanelPinnedOrder)) as? [String] ?? taskPanelPinnedOrder
+    1752 +    }
+    1753 +
+    1754 +    private func taskEnsurePinnedOrderContainsAllPinnedLiveIDs(_ liveIDs: Set<String>) {
+    1755 +        let missing = taskPanelPinnedSessionIDs.filter { liveIDs.contains($0) && !taskPanelPinnedOrder.contains($0) }
+    1756 +        if !missing.isEmpty {
+    1757 +            taskPanelPinnedOrder.append(contentsOf: missing.sorted())
+    1758 +        }
+    1759 +    }
+    1760 +
+    1761 +    private func taskEnsureGroupBucketOrderHasIDs(_ ids: [String], for key: String) {
+    1762 +        var current = taskPanelOrderByGroupBucket[key] ?? []
+    1763 +        for id in ids where !current.contains(id) {
+    1764 +            current.append(id)
+    1765 +        }
+    1766 +        taskPanelOrderByGroupBucket[key] = current
+    1767 +    }
+    1768 +
+    1769 +    private func taskBucketSortOrder(_ bucket: TaskSortBucket) -> Int {
+    1770 +        switch bucket {
+    1771 +        case .abnormal:
+    1772 +            return 0
+    1773 +        case .running:
+    1774 +            return 1
+    1775 +        case .completed:
+    1776 +            return 2
+    1777 +        case .notRunning:
+    1778 +            return 3
+    1779 +        case .pinned:
+    1780 +            return -1
+    1781 +        }
+    1782 +    }
+    1783 +
+    1784 +    private func taskRowsByBucket(_ rows: [TaskBoardRow]) -> [TaskSortBucket: [TaskBoardRow]] {
+    1785 +        Dictionary(grouping: rows, by: { taskSortBucket(for: $0.snapshot) })
+    1786 +    }
+    1787 +
+    1788 +    private func taskIsStateSortedBucket(_ bucket: TaskSortBucket) -> Bool {
+    1789 +        bucket != .pinned
+    1790 +    }
+    1791 +
+    1792 +    private func taskGroupIsGlobal(_ group: TaskBoardGroup) -> Bool {
+    1793 +        group.isPinned
+    1794 +    }
+    1795 +
+    1796 +    private func taskRowIdentifier(_ item: TaskBoardRow) -> String {
+    1797 +        item.session.id
+    1798 +    }
+    1799 +
+    1800 +    private func taskRowTitle(_ item: TaskBoardRow) -> String {
+    1801 +        item.session.title.isEmpty ? "Claude 任务" : item.session.title
+    1802 +    }
+    1803 +
+    1804 +    private func taskRowTTY(_ item: TaskBoardRow) -> String {
+    1805 +        item.session.tty.isEmpty ? "tty 未知" : item.session.tty
+    1806 +    }
+    1807 +
+    1808 +    private func taskRowTerminalName(_ item: TaskBoardRow) -> String {
+    1809 +        item.session.terminalKind.rawValue
+    1810 +    }
+    1811 +
+    1812 +    private func taskRowStrategyName(_ item: TaskBoardRow) -> String {
+    1813 +        item.snapshot.strategyDisplayName
+    1814 +    }
+    1815 +
+    1816 +    private func taskRowRenderTone(_ item: TaskBoardRow) -> TaskRenderTone {
+    1817 +        item.snapshot.renderTone
+    1818 +    }
+    1819 +
+    1820 +    private func taskRowRunning(_ item: TaskBoardRow) -> Bool {
+    1821 +        item.snapshot.isRunning
+    1822 +    }
+    1823 +
+    1824 +    private func taskRowMuted(_ item: TaskBoardRow) -> Bool {
+    1825 +        terminalCapture.isSessionMuted(item.session.id)
+    1826 +    }
+    1827 +
+    1828 +    private func taskRowStatusText(_ item: TaskBoardRow) -> String {
+    1829 +        taskDisplayStatusText(for: item.snapshot)
+    1830 +    }
+    1831 +
+    1832 +    private func taskRowStatusBucket(_ item: TaskBoardRow) -> TaskSortBucket {
+    1833 +        taskSortBucket(for: item.snapshot)
+    1834 +    }
+    1835 +
+    1836 +    private func taskSortStateSummary() -> String {
+    1837 +        "group:\(taskPanelOrderByGroupBucket.count) pinned:\(taskPanelPinnedOrder.count)"
+    1838 +    }
+    1839 +
+    1840 +    private func taskSortStateDebugLine() -> String {
+    1841 +        taskSortStateSummary()
+    1842 +    }
+    1843 +
+    1844 +    private func taskGroupOrderKey(group: String, bucket: TaskSortBucket) -> String {
+    1845 +        taskGroupBucketStorageKey(groupName: group, bucket: bucket)
+    1846 +    }
+    1847 +
+    1848 +    private func taskGroupPreferredOrder() -> [String] {
+    1849 +        ["iTerm", "Terminal"]
+    1850 +    }
+    1851 +
+    1852 +    private func taskGroupRowsDictionary(_ rows: [TaskBoardRow]) -> [String: [TaskBoardRow]] {
+    1853 +        Dictionary(grouping: rows, by: { taskGroupDisplayName(for: $0.session) })
+    1854 +    }
+    1855 +
+    1856 +    private func taskSortedGroupNames(from dict: [String: [TaskBoardRow]]) -> [String] {
+    1857 +        let preferred = taskGroupPreferredOrder()
+    1858 +        let preferredPresent = preferred.filter { dict[$0] != nil }
+    1859 +        let others = dict.keys.filter { !preferred.contains($0) }.sorted()
+    1860 +        return preferredPresent + others
+    1861 +    }
+    1862 +
+    1863 +    private func taskBuildGroups(from rows: [TaskBoardRow]) -> [TaskBoardGroup] {
+    1864 +        let pinnedRows = taskNormalizePinnedOrder(with: rows)
+    1865 +        let nonPinnedRows = taskFilteredRowsExcludingPinned(rows)
+    1866 +        let byGroup = taskGroupRowsDictionary(nonPinnedRows)
+    1867 +        var groups: [TaskBoardGroup] = []
+    1868 +        if !pinnedRows.isEmpty {
+    1869 +            groups.append(taskPinnedGroupSection(rows: pinnedRows))
+    1870 +        }
+    1871 +        for name in taskSortedGroupNames(from: byGroup) {
+    1872 +            groups.append(taskGroupSection(groupName: name, rows: byGroup[name] ?? []))
+    1873 +        }
+    1874 +        return groups
+    1875 +    }
+    1876 +
+    1877 +    private func taskRowsFromSessionsAndSnapshots() -> [TaskBoardRow] {
+    1878 +        terminalCapture.sessions.compactMap { session in
+    1879 +            guard let snap = taskSessionEngine.snapshotsBySessionID[session.id] else { return nil }
+    1880 +            return TaskBoardRow(session: session, snapshot: snap)
+    1881 +        }
+    1882 +    }
+    1883 +
+    1884 +    private func taskGroupTitle(_ group: TaskBoardGroup) -> String {
+    1885 +        group.name
+    1886 +    }
+    1887 +
+    1888 +    private func taskGroupTaskCount(_ group: TaskBoardGroup) -> Int {
+    1889 +        group.tasks.count
+    1890 +    }
+    1891 +
+    1892 +    private func taskGroupRows(_ group: TaskBoardGroup) -> [TaskBoardRow] {
+    1893 +        group.tasks
+    1894 +    }
+    1895 +
+    1896 +    private func taskNeedsPinnedGroup(rows: [TaskBoardRow]) -> Bool {
+    1897 +        rows.contains { taskPanelPinnedSessionIDs.contains($0.session.id) }
+    1898 +    }
+    1899 +
+    1900 +    private func taskRowBackgroundTone(_ item: TaskBoardRow) -> TaskRenderTone {
+    1901 +        item.snapshot.renderTone
+    1902 +    }
+    1903 +
+    1904 +    private func taskRowIsRunning(_ item: TaskBoardRow) -> Bool {
+    1905 +        item.snapshot.isRunning
+    1906 +    }
+    1907 +
+    1908 +    private func taskRowSecondaryText(_ item: TaskBoardRow) -> String {
+    1909 +        item.snapshot.secondaryText
+    1910 +    }
+    1911 +
+    1912 +    private func taskRowInfoText(_ item: TaskBoardRow) -> String {
+    1913 +        "\(item.snapshot.strategyDisplayName) · \(item.session.terminalKind.rawValue) · \(item.session.tty.isEmpty ? "tty 未知" : item.session.tty)"
+    1914 +    }
+    1915 +
+    1916 +    private func taskGroupIsEmpty(_ group: TaskBoardGroup) -> Bool {
+    1917 +        group.tasks.isEmpty
+    1918 +    }
+    1919 +
+    1920 +    private func taskGroupID(_ group: TaskBoardGroup) -> String {
+    1921 +        group.id
+    1922 +    }
+    1923 +
+    1924 +    private func taskGroupName(_ group: TaskBoardGroup) -> String {
+    1925 +        group.name
+    1926 +    }
+    1927 +
+    1928 +    private func taskGroupTaskTotal(_ group: TaskBoardGroup) -> Int {
+    1929 +        group.tasks.count
+    1930 +    }
+    1931 +
+    1932 +    private func taskGroupRowsCountText(_ group: TaskBoardGroup) -> String {
+    1933 +        "\(group.tasks.count) 个任务"
+    1934 +    }
+    1935 +
+    1936 +    private func taskGroupRowsEmptyHint(_ group: TaskBoardGroup) -> String {
+    1937 +        group.isPinned ? "暂无置顶任务" : "暂无捕获任务"
+    1938 +    }
+    1939 +
+    1940 +    private func taskRowCanPin(_ item: TaskBoardRow) -> Bool {
+    1941 +        !item.session.id.isEmpty
+    1942 +    }
+    1943 +
+    1944 +    private func taskRowPinState(_ item: TaskBoardRow) -> Bool {
+    1945 +        taskPanelPinnedSessionIDs.contains(item.session.id)
+    1946 +    }
+    1947 +
+    1948 +    private func taskRowSortBucket(_ item: TaskBoardRow, group: TaskBoardGroup) -> TaskSortBucket {
+    1949 +        group.isPinned ? .pinned : taskSortBucket(for: item.snapshot)
+    1950 +    }
+    1951 +
+    1952 +    private func taskRowDropEnabled(_ item: TaskBoardRow, group: TaskBoardGroup) -> Bool {
+    1953 +        taskRowCanDrop(on: item.session.id, in: group, bucket: taskRowSortBucket(item, group: group))
+    1954 +    }
+    1955 +
+    1956 +    private func taskRowDragEnabled(_ item: TaskBoardRow) -> Bool {
+    1957 +        !item.session.id.isEmpty
+    1958 +    }
+    1959 +
+    1960 +    private func taskDragStart(_ item: TaskBoardRow, group: TaskBoardGroup) {
+    1961 +        taskPanelDraggingSessionID = item.session.id
+    1962 +        taskPanelDraggingGroupName = group.name
+    1963 +        taskPanelDraggingBucket = taskRowSortBucket(item, group: group)
+    1964 +    }
+    1965 +
+    1966 +    private func taskRowDrop(_ item: TaskBoardRow, group: TaskBoardGroup) -> Bool {
+    1967 +        handleTaskDrop(
+    1968 +            destinationSessionID: item.session.id,
+    1969 +            destinationGroupName: group.name,
+    1970 +            destinationBucket: taskRowSortBucket(item, group: group),
+    1971 +            destinationIsPinnedGroup: group.isPinned
+    1972 +        )
+    1973 +    }
+    1974 +
+    1975 +    private func taskRowMuteBinding(_ item: TaskBoardRow) -> Binding<Bool> {
+    1976 +        Binding(
+    1977 +            get: { terminalCapture.isSessionMuted(item.session.id) },
+    1978 +            set: { terminalCapture.setSessionMuted($0, sessionID: item.session.id) }
+    1979 +        )
+    1980 +    }
+    1981 +
+    1982 +    private func taskRowTap(_ item: TaskBoardRow) {
+    1983 +        jumpToExternalTask(session: item.session)
+    1984 +    }
+    1985 +
+    1986 +    private func taskRowPinAction(_ item: TaskBoardRow) {
+    1987 +        toggleTaskPinned(item.session.id)
+    1988 +    }
+    1989 +
+    1990 +    private func taskGroupsForRendering() -> [TaskBoardGroup] {
+    1991 +        taskBuildGroups(from: taskRowsFromSessionsAndSnapshots())
+    1992 +    }
+    1993 +
+    1994 +    private func taskGroupSortOrderHint(_ group: TaskBoardGroup) -> String {
+    1995 +        group.isPinned ? "置顶组：自由拖拽排序" : "组内：按状态分组 + 组内拖拽"
+    1996 +    }
+    1997 +
+    1998 +    private func taskRowStatusHint(_ item: TaskBoardRow) -> String {
+    1999 +        taskSortHint(for: item.snapshot)
+    2000 +    }
+    2001 +
+    2002 +    private func taskGroupStatusHint(_ group: TaskBoardGroup) -> String {
+    2003 +        group.isPinned ? "置顶任务不受状态影响" : taskOrderRuleSummaryText()
+    2004 +    }
+    2005 +
+    2006 +    private func taskGroupPinHint(_ group: TaskBoardGroup) -> String {
+    2007 +        group.isPinned ? "再次点击图钉可取消置顶" : taskPinRuleSummaryText()
+    2008 +    }
+    2009 +
+    2010 +    private func taskGroupDragHint(_ group: TaskBoardGroup) -> String {
+    2011 +        group.isPinned ? "可在置顶组上下拖拽" : "仅可在当前终端组且同状态内拖拽"
+    2012 +    }
+    2013 +
+    2014 +    private func taskNormalizeSortStorageAfterLiveRefresh() {
+    2015 +        taskNormalizeGroupBucketOrderStorage()
+    2016 +        taskValidatePinnedOrderStorage()
+    2017 +    }
+    2018 +
+    2019 +    private func taskCurrentLiveSessionIDs() -> Set<String> {
+    2020 +        Set(terminalCapture.sessions.map(\.id))
+    2021 +    }
+    2022 +
+    2023 +    private func taskEnsureStorageCoherent() {
+    2024 +        let liveIDs = taskCurrentLiveSessionIDs()
+    2025 +        taskEnsurePinnedOrderContainsAllPinnedLiveIDs(liveIDs)
+    2026 +    }
+    2027 +
+    2028 +    private func taskSortStateMaintenance() {
+    2029 +        taskNormalizeSortStorageAfterLiveRefresh()
+    2030 +        taskEnsureStorageCoherent()
+    2031 +    }
+    2032 +
+    2033 +    private func taskShouldPersistAfterMaintenance() -> Bool {
+    2034 +        true
+    2035 +    }
+    2036 +
+    2037 +    private func taskSortStateMaintenanceAndPersistIfNeeded() {
+    2038 +        taskSortStateMaintenance()
+    2039 +        if taskShouldPersistAfterMaintenance() {
+    2040 +            persistTaskPanelSortState()
+    2041 +        }
+    2042 +    }
+    2043 +
+    2044 +    private func taskGroupsWithMaintenance() -> [TaskBoardGroup] {
+    2045 +        taskSortStateMaintenanceAndPersistIfNeeded()
+    2046 +        return taskGroupsForRendering()
+    2047 +    }
+    2048 +
+    2049 +    private var taskGroupsComputed: [TaskBoardGroup] {
+    2050 +        taskGroupsWithMaintenance()
+    2051 +    }
+    2052 +
+    2053 +    private var taskGroupsFallback: [TaskBoardGroup] {
+    2054 +        taskGroupsComputed
+    2055 +    }
+    2056 +
+    2057 +    private var taskGroupsViewData: [TaskBoardGroup] {
+    2058 +        taskGroupsFallback
+    2059 +    }
+    2060 +
+    2061 +    private var taskGroupsRenderable: [TaskBoardGroup] {
+    2062 +        taskGroupsViewData
+    2063 +    }
+    2064 +
+    2065 +    private var taskGroupsForUI: [TaskBoardGroup] {
+    2066 +        taskGroupsRenderable
+    2067 +    }
+    2068 +
+    2069 +    private var taskGroupsForDisplay: [TaskBoardGroup] {
+    2070 +        taskGroupsForUI
+    2071 +    }
+    2072 +
+    2073 +    private var taskGroupsForCurrentPanel: [TaskBoardGroup] {
+    2074 +        taskGroupsForDisplay
+    2075 +    }
+    2076 +
+    2077 +    private var taskGroupsModel: [TaskBoardGroup] {
+    2078 +        taskGroupsForCurrentPanel
+    2079 +    }
+    2080 +
+    2081 +    private var taskGroupsState: [TaskBoardGroup] {
+    2082 +        taskGroupsModel
+    2083 +    }
+    2084 +
+    2085 +    private var taskGroupsData: [TaskBoardGroup] {
+    2086 +        taskGroupsState
+    2087 +    }
+    2088 +
+    2089 +    private var taskGroupsResult: [TaskBoardGroup] {
+    2090 +        taskGroupsData
+    2091 +    }
+    2092 +
+    2097 +    private var taskGroupsFinal: [TaskBoardGroup] {
+    2098 +        taskGroupsSource
+    2099 +    }
+    2100 +
+    2102 +        taskGroupsFinal
+    2109 +    private var taskGroupsDisplayList: [TaskBoardGroup] {
+    2110 +        taskGroupsList
+    2111 +    }
+    2112 +
+    2113 +    private var taskGroups: [TaskBoardGroup] {
+    2114 +        taskGroupsDisplayList
+    2115 +    }
+    2116 +
+    2117 +    private func taskGroupRowsSorted(_ group: TaskBoardGroup) -> [TaskBoardRow] {
+    2118 +        group.tasks
+    2119 +    }
+    2120 +
+    2121 +    private func taskGroupHeaderTitle(_ group: TaskBoardGroup) -> String {
+    2122 +        group.name
+    2123 +    }
+    2124 +
+    2125 +    private func taskGroupHeaderCount(_ group: TaskBoardGroup) -> String {
+    2126 +        "\(group.tasks.count) 个任务"
+    2127 +    }
+    2128 +
+    2129 +    private func taskGroupRowItems(_ group: TaskBoardGroup) -> [TaskBoardRow] {
+    2130 +        group.tasks
+    2131 +    }
+    2132 +
+    2133 +    private func taskGroupEmptyText(_ group: TaskBoardGroup) -> String {
+    2134 +        group.isPinned ? "暂无置顶任务" : "暂无捕获任务"
+    2135 +    }
+    2136 +
+    2137 +    private func taskGroupIsPinnedMode(_ group: TaskBoardGroup) -> Bool {
+    2138 +        group.isPinned
+    2139 +    }
+    2140 +
+    2141 +    private func taskLifecycleRank(_ state: TaskLifecycleState) -> Int {
+    2142 +        switch state {
+    2143 +        case .error: return 6
+    2144 +        case .waitingInput: return 5
+    2145 +        case .running: return 4
+    2146 +        case .success: return 3
+    2147 +        case .idle: return 2
+    2148 +        case .inactiveTool: return 1
+    2149 +        }
+    2150 +    }
+    2151              let app = session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines)
+
+• Explored
+  └ Read IslandView.swift
+    Search private var iTerm2SessionStrip in IslandView.swift
+
+─ Worked for 7m 51s ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• 我刚才发现这一段改动被污染成了大量无关 helper，我会立即做一次“区块重写”：保留前后代码不动，只重写 TaskBoardRow 到 iTerm2SessionStrip 之间为精简可维护版本，然后编译检查。
+
+• 我需要先把 IslandView.swift 回到干净状态再重新精确改一次（刚才的大块替换引入了过多冗余函数，继续修补风险更高）。我会只回滚这个文件并重新做最小改动实现。
+
+ 
+  Would you like to run the following command?
+ 
+  Reason: 需要把刚才误改的大段代码回滚到仓库版本，再重新做精确实现，避免把冗余改动带入。
+ 
+  $ git restore -- Sources/Views/IslandView.swift
+ 
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `git restore -- Sources/Views/IslandView.swift` (p)
+  3. No, and tell Codex what to do differently (esc)
+ 
+  Press enter to confirm or esc to cancel                                                                                                                                       

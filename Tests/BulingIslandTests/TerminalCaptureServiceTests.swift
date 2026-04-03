@@ -34,7 +34,7 @@ final class TerminalCaptureServiceTests: XCTestCase {
     }
 
     func testSignalParserProducesNormalizedErrorFingerprint() {
-        let parser = ClaudeCodexSessionSignalParser()
+        let parser = TaskStrategySessionSignalParser()
         let session = CapturedTerminalSession(
             nativeSessionId: "42",
             backendIdentifier: "backend",
@@ -51,11 +51,11 @@ final class TerminalCaptureServiceTests: XCTestCase {
         XCTAssertEqual(signal.errorFingerprint, "request failed with error # at job #")
     }
 
-    func testParseSnapshotTableSupportsTabbyTerminalKind() {
+    func testParseSnapshotTableSupportsAppleTerminalKind() {
         let fieldSep = String(Character("\u{001F}"))
         let row = [
-            "tabby-win-1",
-            "Tabby",
+            "1:1",
+            "Terminal",
             "workspace",
             "",
             ""
@@ -64,8 +64,30 @@ final class TerminalCaptureServiceTests: XCTestCase {
         let parsed = TerminalAppleScript.parseSnapshotTable(row)
 
         XCTAssertEqual(parsed?.count, 1)
-        XCTAssertEqual(parsed?.first?.terminalKind, .tabby)
-        XCTAssertEqual(parsed?.first?.nativeSessionId, "tabby-win-1")
+        XCTAssertEqual(parsed?.first?.terminalKind, .appleTerminal)
+        XCTAssertEqual(parsed?.first?.nativeSessionId, "1:1")
+    }
+
+    func testWaitingInputSignalUsesFixedManualConfirmationReminder() {
+        let parser = TaskStrategySessionSignalParser()
+        let session = CapturedTerminalSession(
+            nativeSessionId: "approve",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "codex session",
+            tty: "/dev/ttys001",
+            tailOutput: """
+            Would you like to run the following command?
+            1. Yes, proceed (y)
+            2. No, and tell Codex what to do differently (esc)
+            """
+        )
+
+        let signal = parser.parse(session: session)
+
+        XCTAssertEqual(signal.tone, "warn")
+        XCTAssertEqual(signal.summaryText, "您的任务需要手工确认。")
+        XCTAssertEqual(signal.interactionHint, "您的任务需要手工确认。")
     }
 }
 

@@ -180,12 +180,28 @@ final class TerminalCaptureService: ObservableObject {
 
     @discardableResult
     func sendInput(to session: CapturedTerminalSession, text: String, submit: Bool = true) -> Bool {
+        if TerminalTTYWriter.sendInput(tty: session.tty, text: text, submit: submit) {
+            return true
+        }
         guard let backend = backendById[session.backendIdentifier] else { return false }
         return backend.sendInput(
             nativeSessionId: session.nativeSessionId,
             terminalKind: session.terminalKind,
             text: text,
             submit: submit
+        )
+    }
+
+    @discardableResult
+    func sendActions(to session: CapturedTerminalSession, actions: [TaskInteractionOption.Action]) -> Bool {
+        if TerminalTTYWriter.sendActions(tty: session.tty, actions: actions) {
+            return true
+        }
+        guard let backend = backendById[session.backendIdentifier] else { return false }
+        return backend.sendActions(
+            nativeSessionId: session.nativeSessionId,
+            terminalKind: session.terminalKind,
+            actions: actions
         )
     }
 
@@ -286,11 +302,20 @@ final class TerminalCaptureService: ObservableObject {
         if shouldTreatAsHealthy {
             consecutiveFailures = 0
             restartTimer(interval: currentEffectiveInterval())
+            let oldLatestStatusText = latestStatusText
+            let oldLatestStatusTone = latestStatusTone
+            let oldLatestStatusSourceSessionID = latestStatusSourceSessionID
+            let oldLatestStatusSourceTail = latestStatusSourceTail
+            let oldInteractionHint = interactionHint
+            let oldLastError = lastError
+            let oldActiveSessionIDs = activeSessionIDs
             isTerminalHostReachable = hasRunningHost
             lastError = nil
 
             let rows = merged.sessions
-            sessions = rows
+            if sessions != rows {
+                sessions = rows
+            }
 
             var bestStatus: (score: Int, text: String, tone: String, rowID: String, tail: String)?
             var hintText: String?
@@ -299,7 +324,8 @@ final class TerminalCaptureService: ObservableObject {
                 if isSessionMuted(session: row) {
                     continue
                 }
-                let digest = row.tailOutput.hashValue
+                let normalizedTail = row.standardizedTailOutput
+                let digest = normalizedTail.hashValue
                 if sessionDigest[row.id] == digest {
                     continue
                 }
@@ -323,19 +349,19 @@ final class TerminalCaptureService: ObservableObject {
                     }
                     let score = statusPriority(analysis.tone)
                     if bestStatus == nil || score > bestStatus!.score {
-                        bestStatus = (score, analysis.summaryText, analysis.tone, row.id, row.tailOutput)
+                        bestStatus = (score, analysis.summaryText, analysis.tone, row.id, normalizedTail)
                     }
                 } else if interactionHint == nil, analysis.tone == "busy" {
                     let score = statusPriority(analysis.tone)
                     if bestStatus == nil || score > bestStatus!.score {
-                        bestStatus = (score, analysis.summaryText, analysis.tone, row.id, row.tailOutput)
+                        bestStatus = (score, analysis.summaryText, analysis.tone, row.id, normalizedTail)
                     }
                 }
             }
 
             activeSessionIDs = Set(
                 sessionLastChangedAt
-                    .filter { now.timeIntervalSince($0.value) <= 6.0 }
+                    .filter { now.timeIntervalSince($0.value) <= 6.0 && !isSessionMuted($0.key) }
                     .map(\.key)
             )
 
@@ -349,15 +375,36 @@ final class TerminalCaptureService: ObservableObject {
                 } else {
                     interactionHint = hintText
                 }
-                statusRevision &+= 1
             } else {
-                // 本轮无值得推送的状态（例如全部静音或输出未变）；清除「等待确认」类提示，避免卡死在上一次 warn。
+                // 本轮无值得推送的状态（例如全部静音或输出未变）；同时清空 pill 状态，避免保留上一次非静音结果。
+                latestStatusText = nil
+                latestStatusTone = "info"
+                latestStatusSourceSessionID = nil
+                latestStatusSourceTail = nil
                 interactionHint = hintText
+            }
+
+            if oldLatestStatusText != latestStatusText
+                || oldLatestStatusTone != latestStatusTone
+                || oldLatestStatusSourceSessionID != latestStatusSourceSessionID
+                || oldLatestStatusSourceTail != latestStatusSourceTail
+                || oldInteractionHint != interactionHint
+                || oldLastError != lastError
+                || oldActiveSessionIDs != activeSessionIDs
+            {
+                statusRevision &+= 1
             }
 
             return
         }
 
+        let oldLatestStatusText = latestStatusText
+        let oldLatestStatusTone = latestStatusTone
+        let oldLatestStatusSourceSessionID = latestStatusSourceSessionID
+        let oldLatestStatusSourceTail = latestStatusSourceTail
+        let oldInteractionHint = interactionHint
+        let oldLastError = lastError
+        let oldActiveSessionIDs = activeSessionIDs
         isTerminalHostReachable = hasRunningHost
         sessions = []
         latestStatusText = nil
@@ -374,11 +421,20 @@ final class TerminalCaptureService: ObservableObject {
             lastError = "终端会话捕获失败: \(reason)"
             latestStatusText = "终端会话捕获失败"
             latestStatusTone = "error"
-            statusRevision &+= 1
         } else {
             consecutiveFailures = 0
             restartTimer(interval: currentEffectiveInterval())
             lastError = nil
+        }
+
+        if oldLatestStatusText != latestStatusText
+            || oldLatestStatusTone != latestStatusTone
+            || oldLatestStatusSourceSessionID != latestStatusSourceSessionID
+            || oldLatestStatusSourceTail != latestStatusSourceTail
+            || oldInteractionHint != interactionHint
+            || oldLastError != lastError
+            || oldActiveSessionIDs != activeSessionIDs
+        {
             statusRevision &+= 1
         }
     }
@@ -397,7 +453,7 @@ final class TerminalCaptureService: ObservableObject {
         if let parser = signalParsers.first(where: { $0.supports(session: session) }) {
             return parser.parse(session: session)
         }
-        return GenericSessionSignalParser().parse(session: session)
+        return TaskStrategySessionSignalParser().parse(session: session)
     }
 
     private func errorKey(for sessionID: String, signal: TerminalSessionSignal) -> String {

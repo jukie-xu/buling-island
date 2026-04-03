@@ -10,6 +10,25 @@ struct CapturedTerminalSession: Identifiable, Hashable {
     let title: String
     let tty: String
     let tailOutput: String
+    /// 统一标准化后的终端文本。初始化时预计算，避免上层重复访问时反复整段标准化。
+    let standardizedTailOutput: String
+
+    init(
+        nativeSessionId: String,
+        backendIdentifier: String,
+        terminalKind: TerminalKind,
+        title: String,
+        tty: String,
+        tailOutput: String
+    ) {
+        self.nativeSessionId = nativeSessionId
+        self.backendIdentifier = backendIdentifier
+        self.terminalKind = terminalKind
+        self.title = title
+        self.tty = tty
+        self.tailOutput = tailOutput
+        self.standardizedTailOutput = TaskSessionTextToolkit.standardizedTerminalText(from: tailOutput)
+    }
 
     /// SwiftUI / 状态合并用稳定键；跨后端全局唯一。
     var id: String { "\(backendIdentifier)|\(nativeSessionId)" }

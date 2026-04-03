@@ -25,9 +25,14 @@ struct RunningApplicationTerminalHostProbe: TerminalHostHealthProbe {
                candidateBundleIDs.contains(bid) {
                 return true
             }
-            if let name = app.localizedName,
-               name.caseInsensitiveCompare(terminalKind.processName) == .orderedSame {
-                return true
+            if let name = app.localizedName {
+                if name.caseInsensitiveCompare(terminalKind.processName) == .orderedSame {
+                    return true
+                }
+                // 系统语言为中文时，Terminal.app 在台前/进程列表里常显示为「终端」而非 “Terminal”。
+                if terminalKind == .appleTerminal, name == "终端" {
+                    return true
+                }
             }
         }
         return false
@@ -53,7 +58,6 @@ enum TerminalCaptureBackendRegistry {
             ITerm2SessionCaptureBackend(),
             LegacyITermSessionCaptureBackend(),
             AppleTerminalSessionCaptureBackend(),
-            TabbySessionCaptureBackend(),
         ]
         var seen = Set<String>()
         return (extraBackends + builtins).filter { seen.insert($0.backendIdentifier).inserted }
