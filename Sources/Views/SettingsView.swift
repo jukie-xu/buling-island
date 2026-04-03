@@ -763,7 +763,7 @@ struct TaskSettingsTab: View {
 
             taskToggleRow(
                 title: "启用 iTerm2 会话捕获",
-                caption: "用于任务面板：读取 iTerm2/iTerm/系统终端中的 Claude 会话输出并生成会话条与提醒（需自动化权限）。",
+                caption: "用于任务面板：读取 iTerm2/iTerm/Tabby/系统终端中的会话输出并生成会话条与提醒（需自动化权限）。",
                 isOn: $settings.claudeEnableITerm2Capture
             )
 

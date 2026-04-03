@@ -61,28 +61,29 @@ struct ClaudeTaskSessionStrategy: TaskSessionStrategy {
                 secondaryText: "当前未运行任务"
             )
         }
-        if TaskSessionTextToolkit.containsErrorMarkers(lower) {
+        if containsClaudeErrorMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .error,
                 renderTone: .error,
                 secondaryText: TaskSessionTextToolkit.twoLinesPromptAndError(from: session.tailOutput)
             )
         }
-        if TaskSessionTextToolkit.containsWaitingMarkers(lower) {
+        if containsClaudeWaitingMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .waitingInput,
                 renderTone: .warning,
-                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput),
+                interactionOptions: TaskSessionTextToolkit.interactionOptions(from: session.tailOutput)
             )
         }
-        if TaskSessionTextToolkit.containsRunningMarkers(lower) {
+        if containsClaudeRunningMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .running,
                 renderTone: .running,
                 secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
             )
         }
-        if TaskSessionTextToolkit.containsSuccessMarkers(lower) {
+        if containsClaudeSuccessMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .success,
                 renderTone: .success,
@@ -94,6 +95,35 @@ struct ClaudeTaskSessionStrategy: TaskSessionStrategy {
             renderTone: .neutral,
             secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
         )
+    }
+
+    private func containsClaudeErrorMarkers(_ textLowercased: String) -> Bool {
+        [
+            "error", "failed", "exception", "auth_error", "unauthorized", "401",
+            "timeout", "timed out", "报错", "失败", "错误", "超时",
+            "anthropicerror", "invalid api key", "credit balance",
+        ].contains(where: { textLowercased.contains($0) })
+    }
+
+    private func containsClaudeWaitingMarkers(_ textLowercased: String) -> Bool {
+        [
+            "allow", "approve", "confirm", "[y/n]", "(y/n)",
+            "please confirm", "continue?", "是否允许", "请确认", "请选择",
+        ].contains(where: { textLowercased.contains($0) })
+    }
+
+    private func containsClaudeRunningMarkers(_ textLowercased: String) -> Bool {
+        [
+            "esc to interrupt", "thinking", "analyzing", "processing", "executing",
+            "claude is", "处理中", "执行中", "思考中",
+        ].contains(where: { textLowercased.contains($0) })
+    }
+
+    private func containsClaudeSuccessMarkers(_ textLowercased: String) -> Bool {
+        [
+            "done", "completed", "finished", "success", "all set",
+            "已完成", "成功", "完成",
+        ].contains(where: { textLowercased.contains($0) })
     }
 }
 
@@ -110,8 +140,9 @@ struct CodexTaskSessionStrategy: TaskSessionStrategy {
             "openai codex",
             "gpt-5-codex",
             "responses api",
-            "agent",
-            "assistant",
+            "exec_command",
+            "apply_patch",
+            "update_plan",
         ]
         if titleLower.contains("codex") { return true }
         return markers.contains(where: { tailLower.contains($0) })
@@ -127,28 +158,29 @@ struct CodexTaskSessionStrategy: TaskSessionStrategy {
                 secondaryText: "当前未运行任务"
             )
         }
-        if TaskSessionTextToolkit.containsErrorMarkers(lower) {
+        if containsCodexErrorMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .error,
                 renderTone: .error,
                 secondaryText: TaskSessionTextToolkit.twoLinesPromptAndError(from: session.tailOutput)
             )
         }
-        if TaskSessionTextToolkit.containsWaitingMarkers(lower) {
+        if containsCodexWaitingMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .waitingInput,
                 renderTone: .warning,
-                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput),
+                interactionOptions: TaskSessionTextToolkit.interactionOptions(from: session.tailOutput)
             )
         }
-        if TaskSessionTextToolkit.containsRunningMarkers(lower) {
+        if containsCodexRunningMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .running,
                 renderTone: .running,
                 secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
             )
         }
-        if TaskSessionTextToolkit.containsSuccessMarkers(lower) {
+        if containsCodexSuccessMarkers(lower) {
             return TaskSessionRawAnalysis(
                 lifecycle: .success,
                 renderTone: .success,
@@ -160,6 +192,37 @@ struct CodexTaskSessionStrategy: TaskSessionStrategy {
             renderTone: .neutral,
             secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
         )
+    }
+
+    private func containsCodexErrorMarkers(_ textLowercased: String) -> Bool {
+        [
+            "error", "failed", "exception", "traceback", "permission denied",
+            "sandbox denied", "network access is restricted", "rate limit", "429",
+            "报错", "失败", "错误",
+        ].contains(where: { textLowercased.contains($0) })
+    }
+
+    private func containsCodexWaitingMarkers(_ textLowercased: String) -> Bool {
+        [
+            "approval required", "awaiting approval", "allow this action",
+            "sandbox_permissions", "require_escalated", "do you want to allow",
+            "[y/n]", "(y/n)", "请确认", "是否允许",
+        ].contains(where: { textLowercased.contains($0) })
+    }
+
+    private func containsCodexRunningMarkers(_ textLowercased: String) -> Bool {
+        [
+            "exec_command", "apply_patch", "update_plan", "wait_agent",
+            "tool call", "patching", "analyzing repository", "running tests",
+            "执行命令", "应用补丁",
+        ].contains(where: { textLowercased.contains($0) })
+    }
+
+    private func containsCodexSuccessMarkers(_ textLowercased: String) -> Bool {
+        [
+            "patch applied", "tests passed", "implemented", "done", "completed",
+            "finished", "成功", "已完成", "完成",
+        ].contains(where: { textLowercased.contains($0) })
     }
 }
 
@@ -190,7 +253,8 @@ struct GenericTaskSessionStrategy: TaskSessionStrategy {
             return TaskSessionRawAnalysis(
                 lifecycle: .waitingInput,
                 renderTone: .warning,
-                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput)
+                secondaryText: TaskSessionTextToolkit.twoLinesPromptAndReply(from: session.tailOutput),
+                interactionOptions: TaskSessionTextToolkit.interactionOptions(from: session.tailOutput)
             )
         }
         if TaskSessionTextToolkit.containsRunningMarkers(lower) {

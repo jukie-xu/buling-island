@@ -47,7 +47,8 @@ final class TaskSessionEngine: ObservableObject {
                     analysis = TaskSessionRawAnalysis(
                         lifecycle: .running,
                         renderTone: .running,
-                        secondaryText: analysis.secondaryText
+                        secondaryText: analysis.secondaryText,
+                        interactionOptions: analysis.interactionOptions
                     )
                 }
             }
@@ -68,6 +69,7 @@ final class TaskSessionEngine: ObservableObject {
                 renderTone: tone,
                 isRunning: running,
                 secondaryText: analysis.secondaryText,
+                interactionOptions: analysis.interactionOptions,
                 refreshedAt: now
             )
         }

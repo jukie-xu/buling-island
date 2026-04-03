@@ -29,6 +29,59 @@ final class TaskSessionStrategyTests: XCTestCase {
         XCTAssertTrue(s.supports(session: session))
     }
 
+    func testCodexSupportNoLongerMatchesGenericAssistantWord() {
+        let s = CodexTaskSessionStrategy()
+        let session = CapturedTerminalSession(
+            nativeSessionId: "2b",
+            backendIdentifier: "backend",
+            terminalKind: .appleTerminal,
+            title: "task runner",
+            tty: "ttys002",
+            tailOutput: "assistant is analyzing your codebase"
+        )
+        XCTAssertFalse(s.supports(session: session))
+    }
+
+    func testClaudeAndCodexCanClassifySameTailDifferently() {
+        let claude = ClaudeTaskSessionStrategy()
+        let codex = CodexTaskSessionStrategy()
+        let session = CapturedTerminalSession(
+            nativeSessionId: "4",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "shared terminal",
+            tty: "ttys004",
+            tailOutput: "tool call: exec_command"
+        )
+
+        let claudeState = claude.analyze(session: session).lifecycle
+        let codexState = codex.analyze(session: session).lifecycle
+
+        XCTAssertEqual(claudeState, .idle)
+        XCTAssertEqual(codexState, .running)
+    }
+
+    func testCodexWaitingIncludesInteractionOptions() {
+        let codex = CodexTaskSessionStrategy()
+        let session = CapturedTerminalSession(
+            nativeSessionId: "5",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "codex session",
+            tty: "ttys005",
+            tailOutput: """
+            do you want to allow this action?
+            1. Yes, proceed (y)
+            2. No, and tell Codex what to do differently (esc)
+            """
+        )
+
+        let result = codex.analyze(session: session)
+
+        XCTAssertEqual(result.lifecycle, .waitingInput)
+        XCTAssertEqual(result.interactionOptions.map(\.input), ["y", "n"])
+    }
+
     @MainActor
     func testEngineChoosesHigherPriorityStrategy() {
         let session = CapturedTerminalSession(

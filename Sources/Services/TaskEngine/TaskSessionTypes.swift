@@ -18,10 +18,30 @@ enum TaskRenderTone: String, Codable, Hashable {
     case inactive
 }
 
+struct TaskInteractionOption: Codable, Hashable {
+    let id: String
+    let label: String
+    let input: String
+    let submit: Bool
+}
+
 struct TaskSessionRawAnalysis: Hashable {
     let lifecycle: TaskLifecycleState
     let renderTone: TaskRenderTone
     let secondaryText: String
+    let interactionOptions: [TaskInteractionOption]
+
+    init(
+        lifecycle: TaskLifecycleState,
+        renderTone: TaskRenderTone,
+        secondaryText: String,
+        interactionOptions: [TaskInteractionOption] = []
+    ) {
+        self.lifecycle = lifecycle
+        self.renderTone = renderTone
+        self.secondaryText = secondaryText
+        self.interactionOptions = interactionOptions
+    }
 
     static func inactive(_ text: String) -> TaskSessionRawAnalysis {
         TaskSessionRawAnalysis(
@@ -40,5 +60,6 @@ struct TaskSessionSnapshot: Hashable {
     let renderTone: TaskRenderTone
     let isRunning: Bool
     let secondaryText: String
+    let interactionOptions: [TaskInteractionOption]
     let refreshedAt: Date
 }

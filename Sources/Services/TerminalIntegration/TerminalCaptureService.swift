@@ -19,6 +19,8 @@ final class TerminalCaptureService: ObservableObject {
     @Published private(set) var activeSessionIDs: Set<String> = []
 
     private let backends: [TerminalSessionCaptureBackend]
+    private let hostHealthProbes: [TerminalHostHealthProbe]
+    private var signalParsers: [any TerminalSessionSignalParser]
     private let backendById: [String: TerminalSessionCaptureBackend]
 
     private var pollTimer: Timer?
@@ -32,16 +34,46 @@ final class TerminalCaptureService: ObservableObject {
     /// 历史键名保留，避免用户升级后静音列表清空。
     private let mutedSessionDefaultsKey = "itermMutedSessionIDs"
 
-    init(backends: [TerminalSessionCaptureBackend] = [
-        ITerm2SessionCaptureBackend(),
-        LegacyITermSessionCaptureBackend(),
-        AppleTerminalSessionCaptureBackend(),
-    ]) {
+    init(
+        backends: [TerminalSessionCaptureBackend],
+        hostHealthProbes: [TerminalHostHealthProbe],
+        signalParsers: [any TerminalSessionSignalParser]
+    ) {
         self.backends = backends
+        self.hostHealthProbes = hostHealthProbes
+        var seen = Set<String>()
+        self.signalParsers = signalParsers
+            .filter { seen.insert($0.parserID).inserted }
+            .sorted { lhs, rhs in
+                if lhs.priority == rhs.priority {
+                    return lhs.parserID < rhs.parserID
+                }
+                return lhs.priority > rhs.priority
+            }
         self.backendById = Dictionary(uniqueKeysWithValues: backends.map { ($0.backendIdentifier, $0) })
         if let saved = UserDefaults.standard.array(forKey: mutedSessionDefaultsKey) as? [String] {
             mutedSessionIDs = Set(saved)
         }
+    }
+
+    convenience init() {
+        self.init(
+            backends: TerminalCaptureBackendRegistry.resolvedBackends(),
+            hostHealthProbes: TerminalHostHealthProbeRegistry.resolvedProbes(),
+            signalParsers: TerminalSessionSignalParserRegistry.resolvedParsers()
+        )
+    }
+
+    func replaceSignalParsers(_ parsers: [any TerminalSessionSignalParser]) {
+        var seen = Set<String>()
+        signalParsers = parsers
+            .filter { seen.insert($0.parserID).inserted }
+            .sorted { lhs, rhs in
+                if lhs.priority == rhs.priority {
+                    return lhs.parserID < rhs.parserID
+                }
+                return lhs.priority > rhs.priority
+            }
     }
 
     func updateConfig(enabled: Bool, pollInterval: TimeInterval) {
@@ -86,10 +118,11 @@ final class TerminalCaptureService: ObservableObject {
     }
 
     func acknowledgeCurrentIssue(for session: CapturedTerminalSession) {
-        let key = errorKey(for: session.id, tail: session.tailOutput)
+        let signal = parseSignal(for: session)
+        let key = errorKey(for: session.id, signal: signal)
         guard !key.isEmpty else { return }
         acknowledgedErrorUntil[key] = Date().addingTimeInterval(180)
-        if let sig = sessionErrorSignature(for: session.id, tail: session.tailOutput) {
+        if let sig = sessionErrorSignature(for: session.id, signal: signal) {
             acknowledgedSessionSignatureUntil[sig] = Date().addingTimeInterval(180)
         }
         statusRevision &+= 1
@@ -98,10 +131,11 @@ final class TerminalCaptureService: ObservableObject {
     func acknowledgeAllCurrentIssues() {
         var affected = 0
         for session in sessions {
-            let key = errorKey(for: session.id, tail: session.tailOutput)
+            let signal = parseSignal(for: session)
+            let key = errorKey(for: session.id, signal: signal)
             guard !key.isEmpty else { continue }
             acknowledgedErrorUntil[key] = Date().addingTimeInterval(180)
-            if let sig = sessionErrorSignature(for: session.id, tail: session.tailOutput) {
+            if let sig = sessionErrorSignature(for: session.id, signal: signal) {
                 acknowledgedSessionSignatureUntil[sig] = Date().addingTimeInterval(180)
             }
             affected += 1
@@ -144,6 +178,17 @@ final class TerminalCaptureService: ObservableObject {
         backend.activate(nativeSessionId: session.nativeSessionId, terminalKind: session.terminalKind)
     }
 
+    @discardableResult
+    func sendInput(to session: CapturedTerminalSession, text: String, submit: Bool = true) -> Bool {
+        guard let backend = backendById[session.backendIdentifier] else { return false }
+        return backend.sendInput(
+            nativeSessionId: session.nativeSessionId,
+            terminalKind: session.terminalKind,
+            text: text,
+            submit: submit
+        )
+    }
+
     private func currentEffectiveInterval() -> TimeInterval {
         if consecutiveFailures <= 0 { return pollInterval }
         return min(5, pollInterval + Double(consecutiveFailures) * 0.6)
@@ -165,8 +210,9 @@ final class TerminalCaptureService: ObservableObject {
         guard !inFlight else { return }
         inFlight = true
         let snapshotBackends = backends
+        let snapshotProbes = hostHealthProbes
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let merged = Self.mergeBackendFetches(snapshotBackends)
+            let merged = Self.mergeBackendFetches(snapshotBackends, probes: snapshotProbes)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.inFlight = false
@@ -175,22 +221,34 @@ final class TerminalCaptureService: ObservableObject {
         }
     }
 
-    private struct MergedFetch {
+    struct MergedFetch {
         let sessions: [CapturedTerminalSession]
-        let anyHostCaptured: Bool
+        let runningTerminalKinds: Set<TerminalKind>
+        let anyBackendCaptured: Bool
         let scriptErrors: [String]
     }
 
-    private nonisolated static func mergeBackendFetches(_ backends: [TerminalSessionCaptureBackend]) -> MergedFetch {
+    nonisolated static func mergeBackendFetches(
+        _ backends: [TerminalSessionCaptureBackend],
+        probes: [TerminalHostHealthProbe]
+    ) -> MergedFetch {
         var sessions: [CapturedTerminalSession] = []
-        var anyHostCaptured = false
+        let runningTerminalKinds = Set(
+            probes
+                .filter { $0.isHostRunning() }
+                .map(\.terminalKind)
+        )
+        var anyBackendCaptured = false
         var scriptErrors: [String] = []
         for b in backends {
+            if runningTerminalKinds.isDisjoint(with: b.supportedTerminalKinds) {
+                continue
+            }
             switch b.fetchSessions() {
             case .hostNotRunning:
                 break
             case .captured(let rows):
-                anyHostCaptured = true
+                anyBackendCaptured = true
                 for r in rows {
                     sessions.append(
                         CapturedTerminalSession(
@@ -204,25 +262,38 @@ final class TerminalCaptureService: ObservableObject {
                     )
                 }
             case .scriptFailed(let msg):
+                // 各后端对应的终端若根本未启动，脚本可能走到 scriptFailed；与「轮询时所有宿主都未开」视为同一类，不刷药丸红条。
+                if TerminalAppleScript.messageIndicatesTerminalAppNotRunning(msg) {
+                    break
+                }
                 scriptErrors.append("\(b.shortLabel): \(msg)")
             }
         }
-        return MergedFetch(sessions: sessions, anyHostCaptured: anyHostCaptured, scriptErrors: scriptErrors)
+        return MergedFetch(
+            sessions: sessions,
+            runningTerminalKinds: runningTerminalKinds,
+            anyBackendCaptured: anyBackendCaptured,
+            scriptErrors: scriptErrors
+        )
     }
 
     private func consume(merged: MergedFetch) {
         guard isEnabled else { return }
 
-        if merged.anyHostCaptured {
+        let hasRunningHost = !merged.runningTerminalKinds.isEmpty
+        let shouldTreatAsHealthy = hasRunningHost && (merged.anyBackendCaptured || merged.scriptErrors.isEmpty)
+
+        if shouldTreatAsHealthy {
             consecutiveFailures = 0
             restartTimer(interval: currentEffectiveInterval())
-            isTerminalHostReachable = true
+            isTerminalHostReachable = hasRunningHost
             lastError = nil
 
             let rows = merged.sessions
             sessions = rows
 
             var bestStatus: (score: Int, text: String, tone: String, rowID: String, tail: String)?
+            var hintText: String?
             let now = Date()
             for row in rows {
                 if isSessionMuted(session: row) {
@@ -234,14 +305,17 @@ final class TerminalCaptureService: ObservableObject {
                 }
                 sessionDigest[row.id] = digest
                 sessionLastChangedAt[row.id] = now
-                let analysis = TerminalOutputStatusAnalyzer.analyzeStatus(text: row.tailOutput)
+                let analysis = parseSignal(for: row)
+                if hintText == nil, let hint = analysis.interactionHint, !hint.isEmpty {
+                    hintText = hint
+                }
                 if analysis.tone == "error" || analysis.tone == "warn" || analysis.tone == "success" {
                     if analysis.tone == "error" {
-                        let key = errorKey(for: row.id, tail: row.tailOutput)
+                        let key = errorKey(for: row.id, signal: analysis)
                         if let until = acknowledgedErrorUntil[key], until > Date() {
                             continue
                         }
-                        if let sig = sessionErrorSignature(for: row.id, tail: row.tailOutput),
+                        if let sig = sessionErrorSignature(for: row.id, signal: analysis),
                            let until = acknowledgedSessionSignatureUntil[sig],
                            until > Date() {
                             continue
@@ -249,12 +323,12 @@ final class TerminalCaptureService: ObservableObject {
                     }
                     let score = statusPriority(analysis.tone)
                     if bestStatus == nil || score > bestStatus!.score {
-                        bestStatus = (score, analysis.text, analysis.tone, row.id, row.tailOutput)
+                        bestStatus = (score, analysis.summaryText, analysis.tone, row.id, row.tailOutput)
                     }
                 } else if interactionHint == nil, analysis.tone == "busy" {
                     let score = statusPriority(analysis.tone)
                     if bestStatus == nil || score > bestStatus!.score {
-                        bestStatus = (score, analysis.text, analysis.tone, row.id, row.tailOutput)
+                        bestStatus = (score, analysis.summaryText, analysis.tone, row.id, row.tailOutput)
                     }
                 }
             }
@@ -271,21 +345,20 @@ final class TerminalCaptureService: ObservableObject {
                 latestStatusSourceSessionID = bestStatus.rowID
                 latestStatusSourceTail = bestStatus.tail
                 if bestStatus.tone == "warn" {
-                    interactionHint = bestStatus.text
+                    interactionHint = hintText ?? bestStatus.text
                 } else {
-                    interactionHint = nil
+                    interactionHint = hintText
                 }
                 statusRevision &+= 1
             } else {
                 // 本轮无值得推送的状态（例如全部静音或输出未变）；清除「等待确认」类提示，避免卡死在上一次 warn。
-                interactionHint = nil
+                interactionHint = hintText
             }
 
             return
         }
 
-        // 无任何宿主连上
-        isTerminalHostReachable = false
+        isTerminalHostReachable = hasRunningHost
         sessions = []
         latestStatusText = nil
         latestStatusTone = "info"
@@ -294,7 +367,7 @@ final class TerminalCaptureService: ObservableObject {
         interactionHint = nil
         activeSessionIDs = []
 
-        if !merged.scriptErrors.isEmpty {
+        if hasRunningHost && !merged.scriptErrors.isEmpty {
             consecutiveFailures = min(5, consecutiveFailures + 1)
             restartTimer(interval: currentEffectiveInterval())
             let reason = merged.scriptErrors.joined(separator: "；")
@@ -320,31 +393,23 @@ final class TerminalCaptureService: ObservableObject {
         }
     }
 
-    private func errorKey(for sessionID: String, tail: String) -> String {
-        let line = extractLastErrorLine(from: tail)
-        guard !line.isEmpty else { return "" }
-        return "\(sessionID)|\(normalizeErrorLine(line))"
-    }
-
-    private func sessionErrorSignature(for sessionID: String, tail: String) -> String? {
-        let line = extractLastErrorLine(from: tail)
-        guard !line.isEmpty else { return nil }
-        return "\(sessionID)|\(normalizeErrorLine(line))"
-    }
-
-    private func extractLastErrorLine(from tail: String) -> String {
-        let lines = tail
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let markers = ["error", "failed", "exception", "unauthorized", "auth_error", "401", "timeout", "报错", "失败", "错误", "超时"]
-        for line in lines.reversed() {
-            let lower = line.lowercased()
-            if markers.contains(where: { lower.contains($0) }) {
-                return line
-            }
+    private func parseSignal(for session: CapturedTerminalSession) -> TerminalSessionSignal {
+        if let parser = signalParsers.first(where: { $0.supports(session: session) }) {
+            return parser.parse(session: session)
         }
-        return ""
+        return GenericSessionSignalParser().parse(session: session)
+    }
+
+    private func errorKey(for sessionID: String, signal: TerminalSessionSignal) -> String {
+        let line = signal.errorFingerprint ?? normalizeErrorLine(signal.summaryText)
+        guard !line.isEmpty else { return "" }
+        return "\(sessionID)|\(line)"
+    }
+
+    private func sessionErrorSignature(for sessionID: String, signal: TerminalSessionSignal) -> String? {
+        let line = signal.errorFingerprint ?? normalizeErrorLine(signal.summaryText)
+        guard !line.isEmpty else { return nil }
+        return "\(sessionID)|\(line)"
     }
 
     private func normalizeErrorLine(_ line: String) -> String {

@@ -7,14 +7,32 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
     case iTermLegacy = "iTerm"
     /// 系统自带「终端」(Terminal.app)
     case appleTerminal = "Terminal"
+    /// Tabby 终端（基于 Electron）
+    case tabby = "Tabby"
 
     /// `NSRunningApplication` / `System Events` 里的进程名。
     var processName: String {
         switch self {
         case .appleTerminal:
             return "Terminal"
+        case .tabby:
+            return "Tabby"
         default:
             return rawValue
+        }
+    }
+
+    /// 运行时进程探针用：优先按 bundle id 判断，找不到时回退 `processName`。
+    var runtimeBundleIdentifierCandidates: [String] {
+        switch self {
+        case .iTerm2:
+            return ["com.googlecode.iterm2"]
+        case .iTermLegacy:
+            return ["com.googlecode.iterm"]
+        case .appleTerminal:
+            return ["com.apple.Terminal"]
+        case .tabby:
+            return ["org.tabby", "io.tabby", "app.tabby"]
         }
     }
 
@@ -37,6 +55,8 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
             return nil
         case .appleTerminal:
             return "com.apple.Terminal"
+        case .tabby:
+            return "org.tabby"
         }
     }
 
@@ -47,6 +67,8 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
             return "iTerm"
         case .appleTerminal:
             return "Terminal"
+        case .tabby:
+            return "Tabby"
         }
     }
 }

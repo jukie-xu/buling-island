@@ -1,0 +1,144 @@
+{
+  "strategyID": "codex",
+  "displayName": "Codex",
+  "priority": 260,
+  "supports": {
+    "titleContains": ["codex"],
+    "titleRegex": [
+      "(?i)\\bgpt-[0-9.]+-codex\\b"
+    ],
+    "tailContains": [
+      "openai codex",
+      "gpt-5-codex",
+      "gpt-5.3-codex",
+      "gpt-5.4-codex",
+      "exec_command",
+      "apply_patch",
+      "update_plan",
+      "• ran ",
+      "• explored",
+      "• edited",
+      "• added",
+      "• working ("
+    ],
+    "tailRegex": [
+      "(?im)^\\s*•\\s*(ran|explored|edited|added|updated)\\b",
+      "(?im)^\\s*─\\s*worked\\s+for\\b",
+      "(?im)^\\s*gpt-[0-9.]+-codex\\s+"
+    ]
+  },
+  "lifecycleRules": {
+    "error": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "error:",
+        "failed",
+        "exception",
+        "traceback",
+        "build failed",
+        "test failed",
+        "xctassert",
+        "permission denied",
+        "sandbox denied",
+        "network access is restricted",
+        "rate limit",
+        "429",
+        "exited with code",
+        "报错",
+        "失败",
+        "错误"
+      ],
+      "tailRegex": [
+        "(?im)^\\s*error:\\s+",
+        "(?im)^\\s*test case .* failed",
+        "(?im)^\\s*xctassert[a-z]*\\("
+      ]
+    },
+    "waitingInput": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "would you like to run the following command?",
+        "press enter to confirm or esc to cancel",
+        "yes, proceed (y)",
+        "don't ask again",
+        "approval required",
+        "awaiting approval",
+        "allow this action",
+        "sandbox_permissions",
+        "require_escalated",
+        "do you want to allow",
+        "[y/n]",
+        "(y/n)",
+        "请确认",
+        "是否允许"
+      ],
+      "tailRegex": [
+        "(?im)^\\s*would you like to run the following command\\?",
+        "(?im)^\\s*press enter to confirm or esc to cancel\\b",
+        "(?im)^\\s*reason:\\s+"
+      ]
+    },
+    "running": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "• working (",
+        "esc to interrupt",
+        "summarize recent commits",
+        "exec_command",
+        "apply_patch",
+        "update_plan",
+        "wait_agent",
+        "tool call",
+        "compiling",
+        "building for debugging",
+        "running tests",
+        "执行命令",
+        "应用补丁"
+      ],
+      "tailRegex": [
+        "(?im)^\\s*•\\s*working\\s*\\(",
+        "(?im)^\\s*›\\s+",
+        "(?im)^\\s*gpt-[0-9.]+-codex\\s+.*left\\s+·"
+      ]
+    },
+    "success": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "已按你这次要求完成",
+        "验证",
+        "swift build 通过",
+        "tests passed",
+        "patch applied",
+        "implemented",
+        "completed as requested",
+        "all requested changes are complete"
+      ],
+      "tailRegex": [
+        "(?im)^\\s*已按你这次要求完成",
+        "(?im)^\\s*验证\\s*$",
+        "(?im)^\\s*-\\s*swift build 通过"
+      ]
+    }
+  },
+  "defaultLifecycle": "idle",
+  "emptyOutput": {
+    "lifecycle": "idle",
+    "renderTone": "neutral",
+    "secondaryText": "当前未运行任务"
+  },
+  "extraction": {
+    "fallbackText": "暂无可展示输出",
+    "fallbackMaxLength": 120,
+    "byLifecycle": {
+      "idle": { "mode": "truncateCompact", "maxLength": 120 },
+      "running": { "mode": "truncateCompact", "maxLength": 140 },
+      "waitingInput": { "mode": "truncateCompact", "maxLength": 160 },
+      "success": { "mode": "truncateCompact", "maxLength": 120 },
+      "error": { "mode": "promptAndError" }
+    }
+  }
+}

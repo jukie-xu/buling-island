@@ -1116,7 +1116,16 @@ struct IslandView: View {
     }
 
     private var taskPanelEmptyPlaceholderText: String {
-        "未检测到活动中的终端"
+        if !settings.claudeEnableITerm2Capture {
+            return "终端检测已关闭"
+        }
+        if !terminalCapture.isTerminalHostReachable {
+            return "未检测到运行中的终端宿主"
+        }
+        if terminalCapture.sessions.isEmpty {
+            return "终端已运行，暂无可解析会话"
+        }
+        return "未检测到活动中的终端"
     }
 
     private struct TaskBoardRow: Hashable {
@@ -1295,6 +1304,34 @@ struct IslandView: View {
                 .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
                 .lineLimit(2)
                 .truncationMode(.tail)
+
+            if snap.lifecycle == .waitingInput, !snap.interactionOptions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(snap.interactionOptions.prefix(4)), id: \.id) { opt in
+                            Button {
+                                triggerTaskInteractionOption(session: task, option: opt)
+                            } label: {
+                                Text(opt.label)
+                                    .font(.system(size: max(9, taskFontBase - 1), weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.92))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.orange.opacity(0.24))
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .strokeBorder(Color.orange.opacity(0.55), lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
 
             HStack(spacing: 6) {
                 Text(snap.strategyDisplayName)
@@ -1574,7 +1611,7 @@ struct IslandView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.white.opacity(0.65))
                 Spacer()
-                Text("\(terminalCapture.sessions.count) 个 Claude 会话")
+                Text("\(terminalCapture.sessions.count) 个会话")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.55))
             }
@@ -1797,6 +1834,18 @@ struct IslandView: View {
         terminalCapture.acknowledgeCurrentIssue(for: session)
         terminalCapture.activate(session: session)
         viewModel.collapse()
+    }
+
+    private func triggerTaskInteractionOption(session: CapturedTerminalSession, option: TaskInteractionOption) {
+        terminalCapture.acknowledgeCurrentIssue(for: session)
+        let ok = terminalCapture.sendInput(
+            to: session,
+            text: option.input,
+            submit: option.submit
+        )
+        if !ok {
+            terminalCapture.activate(session: session)
+        }
     }
 
     private func taskLifecycleRank(_ state: TaskLifecycleState) -> Int {

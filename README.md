@@ -64,6 +64,11 @@ swift test
 ./install-local.sh
 ```
 
+## Codex Development Rules / Codex 开发规范
+
+- 每次完成功能代码修改后，必须重新执行 `/Users/jukie/git/buling-island/install-local.sh`，将最新构建安装部署到本机。
+- 若脚本执行失败，需先修复失败原因，再继续后续验证与提交流程。
+
 构建产物：
 
 - `BulingIsland.app` — 可直接运行的应用

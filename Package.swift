@@ -25,6 +25,7 @@ let package = Package(
             ],
             resources: [
                 .process("Assets.xcassets"),
+                .process("Configs"),
             ],
             swiftSettings: [
                 .unsafeFlags(["-swift-version", "5"]),

@@ -1,0 +1,93 @@
+{
+  "strategyID": "generic",
+  "displayName": "Generic TUI",
+  "priority": 10,
+  "supports": {
+    "titleContains": [],
+    "titleRegex": [],
+    "tailContains": [],
+    "tailRegex": [".*"]
+  },
+  "lifecycleRules": {
+    "error": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "error",
+        "failed",
+        "exception",
+        "auth_error",
+        "unauthorized",
+        "401",
+        "timeout",
+        "timed out",
+        "报错",
+        "失败",
+        "错误",
+        "超时"
+      ],
+      "tailRegex": []
+    },
+    "waitingInput": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "allow",
+        "approve",
+        "confirm",
+        "[y/n]",
+        "(y/n)",
+        "请确认",
+        "请选择",
+        "是否允许"
+      ],
+      "tailRegex": []
+    },
+    "running": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "running",
+        "executing",
+        "processing",
+        "thinking",
+        "analyzing",
+        "处理中",
+        "执行中",
+        "思考中"
+      ],
+      "tailRegex": []
+    },
+    "success": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "done",
+        "completed",
+        "finished",
+        "success",
+        "已完成",
+        "成功",
+        "完成"
+      ],
+      "tailRegex": []
+    }
+  },
+  "defaultLifecycle": "idle",
+  "emptyOutput": {
+    "lifecycle": "inactiveTool",
+    "renderTone": "inactive",
+    "secondaryText": "当前会话未匹配 Claude/Codex 策略"
+  },
+  "extraction": {
+    "fallbackText": "暂无可展示输出",
+    "fallbackMaxLength": 88,
+    "byLifecycle": {
+      "idle": { "mode": "truncateCompact", "maxLength": 88 },
+      "running": { "mode": "promptAndReply" },
+      "waitingInput": { "mode": "promptAndReply" },
+      "success": { "mode": "promptAndReply" },
+      "error": { "mode": "promptAndError" }
+    }
+  }
+}

@@ -17,6 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 开发中的变更请先记在此处；发布新版本时移动到带日期的版本节，并同步更新 `Sources/Info.plist` 中的 `CFBundleShortVersionString` 与 `CFBundleVersion`。
 
+### Fixed
+
+- iTerm2 会话捕获：AppleScript 中循环变量勿用 `asess`（易被拆成关键字 `as`）、勿用 `oneWin`/`oneTab`（易被拆成 `one`）；已改为 `eachWin`/`eachTab`/`sessionRef` 等标识符并略作结构加固。
+- 终端轮询：各后端对应 App 未启动而导致的失败文案不再与「真脚本错误」混为一谈并刷红条；含 `syntax error` 的仍视为真故障。
+
 ### Changed
 
 - 任务面板：未检测到已接入的终端宿主时，在面板正中显示浅灰提示「未检测到活动中的终端」。

@@ -12,26 +12,17 @@ enum TerminalOutputStatusAnalyzer {
             return ("暂无可分析输出", "info")
         }
 
-        if lower.contains("error") || lower.contains("failed") || lower.contains("exception")
-            || lower.contains("auth_error") || lower.contains("401") || lower.contains("unauthorized")
-            || lower.contains("报错") || lower.contains("失败") || lower.contains("错误") {
+        if TaskSessionTextToolkit.containsErrorMarkers(lower) {
             return ("错误: \(truncate(compact, max: 42))", "error")
         }
-        if lower.contains("allow") || lower.contains("approve") || lower.contains("[y/n]") || lower.contains("(y/n)")
-            || lower.contains("请确认") || lower.contains("请选择") || lower.contains("是否允许") {
+        if TaskSessionTextToolkit.containsWaitingMarkers(lower) {
             return ("等待确认: \(truncate(compact, max: 42))", "warn")
         }
-        if lower.contains("billowing") || lower.contains("thinking") || lower.contains("analyzing")
-            || lower.contains("executing") || lower.contains("processing") || lower.contains("处理中") {
+        if TaskSessionTextToolkit.containsRunningMarkers(lower) {
             return ("执行中: \(truncate(compact, max: 42))", "busy")
         }
-        if lower.contains("done") || lower.contains("completed") || lower.contains("success")
-            || lower.contains("已完成") || lower.contains("成功") {
+        if TaskSessionTextToolkit.containsSuccessMarkers(lower) {
             return ("已完成: \(truncate(compact, max: 42))", "success")
-        }
-        if lower.contains("running") || lower.contains("processing") || lower.contains("executing")
-            || lower.contains("thinking") || lower.contains("处理中") || lower.contains("执行中") {
-            return ("执行中: \(truncate(compact, max: 42))", "busy")
         }
         return (truncate(compact, max: 42), "info")
     }

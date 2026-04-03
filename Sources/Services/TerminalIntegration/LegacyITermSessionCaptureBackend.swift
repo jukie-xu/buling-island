@@ -4,6 +4,7 @@ import Foundation
 final class LegacyITermSessionCaptureBackend: TerminalSessionCaptureBackend, @unchecked Sendable {
     let backendIdentifier = "com.buling.capture.iterm-legacy"
     let shortLabel = "iTerm"
+    let supportedTerminalKinds: Set<TerminalKind> = [.iTermLegacy]
 
     nonisolated func fetchSessions() -> TerminalSessionFetchResult {
         let script = """
@@ -27,7 +28,13 @@ final class LegacyITermSessionCaptureBackend: TerminalSessionCaptureBackend, @un
                         end try
                         set bodyText to ""
                         try
-                            set bodyText to (contents of s as text)
+                            set bodyText to (text of s as text)
+                        on error
+                            try
+                                set bodyText to (contents of s as text)
+                            on error
+                                set bodyText to ""
+                            end try
                         end try
                         set tailText to bodyText
                         set charCount to count of tailText
@@ -97,5 +104,45 @@ final class LegacyITermSessionCaptureBackend: TerminalSessionCaptureBackend, @un
         DispatchQueue.global(qos: .userInitiated).async {
             _ = TerminalAppleScript.runReturningStdout(script)
         }
+    }
+
+    nonisolated func sendInput(nativeSessionId: String, terminalKind: TerminalKind, text: String, submit: Bool) -> Bool {
+        guard terminalKind == .iTermLegacy else { return false }
+        let sessionID = nativeSessionId.replacingOccurrences(of: "\"", with: "\\\"")
+        let payload = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let newlineFlag = submit ? "YES" : "NO"
+        let script = """
+        set targetID to "\(sessionID)"
+        set payload to "\(payload)"
+        tell application "System Events"
+            if not (exists process "iTerm") then
+                return "__APP_NOT_RUNNING__"
+            end if
+        end tell
+        tell application "iTerm"
+            activate
+            repeat with w in windows
+                repeat with t in tabs of w
+                    try
+                        set matches to (sessions of t whose unique id is targetID)
+                        if (count of matches) is not 0 then
+                            set s to item 1 of matches
+                            select s
+                            select t
+                            tell s to write text payload newline \(newlineFlag)
+                            return "__OK__"
+                        end if
+                    end try
+                end repeat
+            end repeat
+        end tell
+        return "__SESSION_NOT_FOUND__"
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = TerminalAppleScript.runReturningStdout(script)
+        }
+        return true
     }
 }

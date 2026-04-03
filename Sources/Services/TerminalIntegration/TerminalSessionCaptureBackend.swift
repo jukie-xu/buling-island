@@ -8,9 +8,24 @@ protocol TerminalSessionCaptureBackend: AnyObject, Sendable {
     var backendIdentifier: String { get }
     /// 错误文案、调试日志用短名。
     var shortLabel: String { get }
+    /// 本后端负责的终端种类（用于在宿主未运行时短路抓取，避免误报）。
+    var supportedTerminalKinds: Set<TerminalKind> { get }
 
     nonisolated func fetchSessions() -> TerminalSessionFetchResult
 
     /// 在用户点击外部会话条时，将焦点切到对应宿主窗口（具体实现因 App 而异）。
     nonisolated func activate(nativeSessionId: String, terminalKind: TerminalKind)
+
+    /// 向目标会话注入输入（可选回车执行）。返回 false 表示当前后端不支持该能力。
+    nonisolated func sendInput(nativeSessionId: String, terminalKind: TerminalKind, text: String, submit: Bool) -> Bool
+}
+
+extension TerminalSessionCaptureBackend {
+    nonisolated func sendInput(nativeSessionId: String, terminalKind: TerminalKind, text: String, submit: Bool) -> Bool {
+        _ = nativeSessionId
+        _ = terminalKind
+        _ = text
+        _ = submit
+        return false
+    }
 }

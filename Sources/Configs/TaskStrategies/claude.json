@@ -1,0 +1,114 @@
+{
+  "strategyID": "claude",
+  "displayName": "Claude",
+  "priority": 300,
+  "supports": {
+    "titleContains": ["claude"],
+    "titleRegex": [],
+    "tailContains": [
+      "claude",
+      "claude code",
+      "what should claude do",
+      "what should claude do instead",
+      "interrupted",
+      "billowing",
+      "sonnet",
+      "ask claude",
+      "esc to interrupt"
+    ],
+    "tailRegex": []
+  },
+  "lifecycleRules": {
+    "error": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "error",
+        "failed",
+        "exception",
+        "auth_error",
+        "unauthorized",
+        "401",
+        "timeout",
+        "timed out",
+        "报错",
+        "失败",
+        "错误",
+        "超时",
+        "anthropicerror",
+        "invalid api key",
+        "credit balance"
+      ],
+      "tailRegex": []
+    },
+    "waitingInput": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "allow",
+        "approve",
+        "confirm",
+        "interrupted",
+        "what should claude do instead",
+        "[y/n]",
+        "(y/n)",
+        "please confirm",
+        "continue?",
+        "是否允许",
+        "请确认",
+        "请选择"
+      ],
+      "tailRegex": []
+    },
+    "running": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "esc to interrupt",
+        "thinking",
+        "analyzing",
+        "processing",
+        "executing",
+        "sublimating",
+        "retrying in",
+        "claude is",
+        "处理中",
+        "执行中",
+        "思考中"
+      ],
+      "tailRegex": []
+    },
+    "success": {
+      "titleContains": [],
+      "titleRegex": [],
+      "tailContains": [
+        "done",
+        "completed",
+        "finished",
+        "success",
+        "all set",
+        "已完成",
+        "成功",
+        "完成"
+      ],
+      "tailRegex": []
+    }
+  },
+  "defaultLifecycle": "idle",
+  "emptyOutput": {
+    "lifecycle": "idle",
+    "renderTone": "neutral",
+    "secondaryText": "当前未运行任务"
+  },
+  "extraction": {
+    "fallbackText": "暂无可展示输出",
+    "fallbackMaxLength": 88,
+    "byLifecycle": {
+      "idle": { "mode": "promptAndReply" },
+      "running": { "mode": "promptAndReply" },
+      "waitingInput": { "mode": "promptAndReply" },
+      "success": { "mode": "promptAndReply" },
+      "error": { "mode": "promptAndError" }
+    }
+  }
+}

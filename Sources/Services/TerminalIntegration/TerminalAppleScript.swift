@@ -38,14 +38,27 @@ enum TerminalAppleScript {
 
     private static func classifyOsascriptAsHostUnreachable(stderr: String, stdout: String) -> Bool {
         let bundle = [stderr, stdout].joined(separator: "\n")
-        let lower = bundle.lowercased()
-        if bundle.contains("__NOT_RUNNING__") { return true }
+        return messageIndicatesTerminalAppNotRunning(bundle)
+    }
+
+    /// 将「目标终端进程未启动 / 未响应 Apple Event」与真脚本错误区分，供轮询合并时消抖。
+    static func messageIndicatesTerminalAppNotRunning(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if lower.contains("syntax error") { return false }
+        if text.contains("__NOT_RUNNING__") { return true }
+        // AppleScript / Apple Event 常见：应用未运行时返回 -600
+        if lower.contains("(-600)") || lower.contains(" error -600") { return true }
         if lower.contains("application isn't running")
             || lower.contains("application is not running")
-            || lower.contains("not running")
-            || bundle.contains("未能找到")
-            || bundle.contains("没有运行")
-            || bundle.contains("找不到应用程序")
+            || lower.contains("isn't running")
+            || lower.contains("is not running")
+        {
+            return true
+        }
+        if text.contains("未能找到")
+            || text.contains("没有运行")
+            || text.contains("找不到应用程序")
+            || text.contains("未运行")
         {
             return true
         }

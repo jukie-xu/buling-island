@@ -5,6 +5,7 @@ import Foundation
 final class AppleTerminalSessionCaptureBackend: TerminalSessionCaptureBackend, @unchecked Sendable {
     let backendIdentifier = "com.buling.capture.apple-terminal"
     let shortLabel = "Terminal"
+    let supportedTerminalKinds: Set<TerminalKind> = [.appleTerminal]
 
     nonisolated func fetchSessions() -> TerminalSessionFetchResult {
         let script = """
@@ -108,5 +109,52 @@ final class AppleTerminalSessionCaptureBackend: TerminalSessionCaptureBackend, @
         DispatchQueue.global(qos: .userInitiated).async {
             _ = TerminalAppleScript.runReturningStdout(script)
         }
+    }
+
+    nonisolated func sendInput(nativeSessionId: String, terminalKind: TerminalKind, text: String, submit: Bool) -> Bool {
+        guard terminalKind == .appleTerminal else { return false }
+        let escapedID = nativeSessionId
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let payload = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let submitLine = submit ? "key code 36" : ""
+        let script = """
+        set targetID to "\(escapedID)"
+        set payload to "\(payload)"
+        set saveTID to AppleScript's text item delimiters
+        set AppleScript's text item delimiters to ":"
+        set parts to text items of targetID
+        set AppleScript's text item delimiters to saveTID
+        if (count of parts) is not 2 then return "__BAD_ID__"
+        set targetWid to item 1 of parts
+        set targetTi to (item 2 of parts as integer)
+        tell application "System Events"
+            if not (exists process "Terminal") then
+                return "__APP_NOT_RUNNING__"
+            end if
+        end tell
+        tell application "Terminal"
+            activate
+            repeat with w in windows
+                if (id of w as text) is targetWid then
+                    set selected of tab targetTi of w to true
+                    set frontmost of w to true
+                    set index of w to 1
+                    exit repeat
+                end if
+            end repeat
+        end tell
+        tell application "System Events"
+            keystroke payload
+            \(submitLine)
+        end tell
+        return "__OK__"
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = TerminalAppleScript.runReturningStdout(script)
+        }
+        return true
     }
 }
