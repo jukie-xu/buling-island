@@ -28,6 +28,7 @@ struct IslandView: View {
     @State private var taskPanelPinnedSessionIDs: Set<String> = []
     @State private var taskPanelPinnedOrder: [String] = []
     @State private var taskPanelOrderByGroupBucket: [String: [String]] = [:]
+    @State private var cachedTaskGroups: [TaskBoardGroup] = []
     @State private var taskPanelDraggingSessionID: String?
     @State private var taskPanelDraggingGroupName: String?
     @State private var taskPanelDraggingBucket: TaskSortBucket?
@@ -211,7 +212,6 @@ struct IslandView: View {
         .onChange(of: viewModel.expandedPanelMode) { mode in
             // 终端轮询是否在跑仅由设置项决定；切换标签仍同步间隔/状态并刷新任务快照。
             syncTerminalCaptureConfig()
-            refreshTaskSnapshots()
             if mode == .tasks {
                 TerminalAutomationAccessProber.requestPromptsForSupportedTerminalHosts()
             }
@@ -1175,29 +1175,7 @@ struct IslandView: View {
     private static let taskPanelGroupBucketOrderDefaultsKey = "taskPanel.groupBucket.order.v1"
 
     private var taskGroups: [TaskBoardGroup] {
-        let rows: [TaskBoardRow] = terminalCapture.sessions.compactMap { session in
-            guard let snap = taskSessionEngine.snapshotsBySessionID[session.id] else { return nil }
-            return TaskBoardRow(session: session, snapshot: snap)
-        }
-        let rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.session.id, $0) })
-        let pinnedRows = taskPanelPinnedOrder.compactMap { rowsByID[$0] }
-        let pinnedIDs = Set(pinnedRows.map(\.session.id))
-        let nonPinnedRows = rows.filter { !pinnedIDs.contains($0.session.id) }
-        let rowsByGroup = Dictionary(grouping: nonPinnedRows, by: taskGroupDisplayName(for:))
-
-        var result: [TaskBoardGroup] = []
-        if !pinnedRows.isEmpty {
-            result.append(TaskBoardGroup(id: "task-group-pinned", name: "置顶", isPinned: true, tasks: pinnedRows))
-        }
-
-        let preferred = ["iTerm", "Terminal"]
-        for name in preferred where rowsByGroup[name] != nil {
-            result.append(TaskBoardGroup(id: "task-group-\(name)", name: name, isPinned: false, tasks: sortedRowsForGroup(rowsByGroup[name] ?? [], groupName: name)))
-        }
-        for name in rowsByGroup.keys.filter({ !preferred.contains($0) }).sorted() {
-            result.append(TaskBoardGroup(id: "task-group-\(name)", name: name, isPinned: false, tasks: sortedRowsForGroup(rowsByGroup[name] ?? [], groupName: name)))
-        }
-        return result
+        cachedTaskGroups
     }
 
     private func taskGroupDisplayName(for row: TaskBoardRow) -> String {
@@ -1492,6 +1470,7 @@ struct IslandView: View {
             moveElementRelative(in: &ids, movingID: draggingID, targetID: targetID, insertAfter: taskPanelDropInsertAfter)
             taskPanelPinnedOrder = ids
             persistTaskPanelSortState()
+            cachedTaskGroups = rebuildTaskGroups()
             return
         }
 
@@ -1504,6 +1483,7 @@ struct IslandView: View {
         moveElementRelative(in: &ids, movingID: draggingID, targetID: targetID, insertAfter: taskPanelDropInsertAfter)
         taskPanelOrderByGroupBucket[key] = ids
         persistTaskPanelSortState()
+        cachedTaskGroups = rebuildTaskGroups()
     }
 
     private func moveElementRelative(in ids: inout [String], movingID: String, targetID: String, insertAfter: Bool) {
@@ -1558,6 +1538,7 @@ struct IslandView: View {
         }
         reconcileTaskPanelSortStateWithLiveSessions()
         persistTaskPanelSortState()
+        cachedTaskGroups = rebuildTaskGroups()
     }
 
     private func loadTaskPanelSortStateIfNeeded() {
@@ -1574,6 +1555,7 @@ struct IslandView: View {
             taskPanelOrderByGroupBucket = map
         }
         reconcileTaskPanelSortStateWithLiveSessions()
+        cachedTaskGroups = rebuildTaskGroups()
     }
 
     private func persistTaskPanelSortState() {
@@ -1598,6 +1580,7 @@ struct IslandView: View {
         }
         taskPanelOrderByGroupBucket = cleaned
         persistTaskPanelSortState()
+        cachedTaskGroups = rebuildTaskGroups()
     }
 
     @ViewBuilder
@@ -1806,7 +1789,6 @@ struct IslandView: View {
             enabled: shouldEnableCapture,
             pollInterval: effectivePollInterval
         )
-        refreshTaskSnapshots()
     }
 
     private func clearPillAlertsAfterOpen() {
@@ -1828,6 +1810,47 @@ struct IslandView: View {
 
     private func refreshTaskSnapshots() {
         taskSessionEngine.refresh(sessions: terminalCapture.sessions)
+        cachedTaskGroups = rebuildTaskGroups()
+    }
+
+    private func rebuildTaskGroups() -> [TaskBoardGroup] {
+        let rows: [TaskBoardRow] = terminalCapture.sessions.compactMap { session in
+            guard let snap = taskSessionEngine.snapshotsBySessionID[session.id] else { return nil }
+            return TaskBoardRow(session: session, snapshot: snap)
+        }
+        let rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.session.id, $0) })
+        let pinnedRows = taskPanelPinnedOrder.compactMap { rowsByID[$0] }
+        let pinnedIDs = Set(pinnedRows.map(\.session.id))
+        let nonPinnedRows = rows.filter { !pinnedIDs.contains($0.session.id) }
+        let rowsByGroup = Dictionary(grouping: nonPinnedRows, by: taskGroupDisplayName(for:))
+
+        var result: [TaskBoardGroup] = []
+        if !pinnedRows.isEmpty {
+            result.append(TaskBoardGroup(id: "task-group-pinned", name: "置顶", isPinned: true, tasks: pinnedRows))
+        }
+
+        let preferred = ["iTerm", "Terminal"]
+        for name in preferred where rowsByGroup[name] != nil {
+            result.append(
+                TaskBoardGroup(
+                    id: "task-group-\(name)",
+                    name: name,
+                    isPinned: false,
+                    tasks: sortedRowsForGroup(rowsByGroup[name] ?? [], groupName: name)
+                )
+            )
+        }
+        for name in rowsByGroup.keys.filter({ !preferred.contains($0) }).sorted() {
+            result.append(
+                TaskBoardGroup(
+                    id: "task-group-\(name)",
+                    name: name,
+                    isPinned: false,
+                    tasks: sortedRowsForGroup(rowsByGroup[name] ?? [], groupName: name)
+                )
+            )
+        }
+        return result
     }
 
     private func jumpToExternalTask(session: CapturedTerminalSession) {
