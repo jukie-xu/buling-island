@@ -154,4 +154,28 @@ final class TaskStrategyFileConfigTests: XCTestCase {
         let result = codex.analyze(session: session)
         XCTAssertEqual(result.lifecycle, .error)
     }
+
+    func testBundledCodexDoesNotTreatProductSpecMentioningErrorSummaryAsFailure() throws {
+        // 必须用包内 JSON：`~/Library/.../TaskStrategies/codex.json` 会整文件覆盖合并结果，与仓库内置不一致时易误判。
+        let url = try XCTUnwrap(TaskStrategyFileLoader.urlForBundledStrategyJSON(strategyID: "codex"))
+        let config = try JSONDecoder().decode(TaskStrategyFileConfig.self, from: Data(contentsOf: url))
+        let codex = ConfigurableTaskSessionStrategy(config: config)
+
+        let session = CapturedTerminalSession(
+            nativeSessionId: "codex-spec-copy",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "ttys028",
+            tailOutput: """
+            1、任务的文案，现在太长了 2、任务状态应该排布在第一位置。异常取错误摘要，待确认取交互首行。
+            同步失败时的重试策略另述。There is no exception to this rule.
+
+            gpt-5.4 medium · 97% left · ~/git/buling-island
+            """
+        )
+
+        let result = codex.analyze(session: session)
+        XCTAssertNotEqual(result.lifecycle, .error)
+    }
 }

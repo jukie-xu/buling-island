@@ -171,4 +171,72 @@ final class TaskSessionPanelTextTests: XCTestCase {
 
         XCTAssertEqual(text, "提交并推送\n• Working (21s • esc to interrupt)")
     }
+
+    func testTaskPanelDisplayLinesSplitsPromptAndStatus() {
+        let lines = TaskSessionTextToolkit.taskPanelDisplayLines(
+            from: "提交并推送\n\(TaskSessionTextToolkit.taskPanelCompletedLine)"
+        )
+
+        XCTAssertEqual(lines.primary, "提交并推送")
+        XCTAssertEqual(lines.secondary, TaskSessionTextToolkit.taskPanelCompletedLine)
+    }
+
+    func testTaskPanelDisplayLinesSupportBodyPromptAndStatus() {
+        let lines = TaskSessionTextToolkit.taskPanelDisplayLines(
+            from: "提交并推送\n\(TaskSessionTextToolkit.taskPanelCompletedLine)"
+        )
+
+        XCTAssertEqual(lines.primary, "提交并推送")
+        XCTAssertEqual(lines.secondary, TaskSessionTextToolkit.taskPanelCompletedLine)
+    }
+
+    @MainActor
+    func testIdleAfterRunningKeepsFirstPromptAndShowsCompleted() throws {
+        let codex = try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: "codex"))
+        let tailRunning = """
+        › 提交并推送
+
+        • Working (21s • esc to interrupt)
+        """
+        let tailIdle = """
+        › 提交并推送
+
+        • 如果你希望，我也可以继续帮你排查这台机器上的 Git 认证或网络问题。
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 97% left · ~/git/buling-island
+        """
+
+        let engine = TaskSessionEngine(strategies: [codex])
+        let t0 = Date(timeIntervalSince1970: 10_000)
+        let t1 = Date(timeIntervalSince1970: 10_010)
+
+        let sessionRunning = CapturedTerminalSession(
+            nativeSessionId: "codex-idle-after-task",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "/dev/ttys024",
+            tailOutput: tailRunning
+        )
+        engine.refresh(sessions: [sessionRunning], now: t0)
+        let snap0 = try XCTUnwrap(engine.snapshotsBySessionID[sessionRunning.id])
+        XCTAssertEqual(snap0.lifecycle, .running)
+        XCTAssertTrue(snap0.isRunning)
+
+        let sessionIdle = CapturedTerminalSession(
+            nativeSessionId: "codex-idle-after-task",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "/dev/ttys024",
+            tailOutput: tailIdle
+        )
+        engine.refresh(sessions: [sessionIdle], now: t1)
+        let snap1 = try XCTUnwrap(engine.snapshotsBySessionID[sessionIdle.id])
+        XCTAssertEqual(snap1.lifecycle, .idle)
+        XCTAssertFalse(snap1.isRunning)
+        XCTAssertEqual(snap1.secondaryText, "提交并推送\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
+    }
 }

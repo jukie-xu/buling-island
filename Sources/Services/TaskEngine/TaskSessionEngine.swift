@@ -8,9 +8,14 @@ final class TaskSessionEngine: ObservableObject {
     private var strategies: [any TaskSessionStrategy]
     private var stateMachine = TaskSessionStateMachine()
     private var taskPanelMemoryBySessionID: [String: TaskSessionPanelMemory] = [:]
+    private let transcriptCache: TaskSessionTranscriptCache
 
-    init(strategies: [any TaskSessionStrategy]) {
+    init(
+        strategies: [any TaskSessionStrategy],
+        transcriptCache: TaskSessionTranscriptCache? = nil
+    ) {
         self.strategies = Self.sortedStrategies(strategies)
+        self.transcriptCache = transcriptCache ?? TaskSessionTranscriptCache()
     }
 
     convenience init() {
@@ -34,6 +39,7 @@ final class TaskSessionEngine: ObservableObject {
         let liveIDs = Set(sessions.map(\.id))
         stateMachine.purge(keepingSessionIDs: liveIDs)
         taskPanelMemoryBySessionID = taskPanelMemoryBySessionID.filter { liveIDs.contains($0.key) }
+        transcriptCache.reconcileLiveSessions(liveIDs, now: now)
 
         var next: [String: TaskSessionSnapshot] = [:]
         next.reserveCapacity(sessions.count)
@@ -53,8 +59,20 @@ final class TaskSessionEngine: ObservableObject {
             let running = (stabilized == .running)
 
             var panelMem = taskPanelMemoryBySessionID[session.id] ?? TaskSessionPanelMemory()
-            let promptNow = TaskSessionTextToolkit.extractLatestUserPrompt(from: normalizedTail)
+            let extractedPrompt = TaskSessionTextToolkit.extractLatestUserPrompt(from: normalizedTail)
+            let transcript = transcriptCache.observe(
+                sessionID: session.id,
+                normalizedTail: normalizedTail,
+                extractedPrompt: extractedPrompt,
+                now: now
+            )
+            let promptNow = transcript.latestSubmittedPrompt ?? extractedPrompt
             let replyNow = TaskSessionTextToolkit.extractLatestReply(from: normalizedTail)
+            transcriptCache.recordLifecycle(
+                sessionID: session.id,
+                lifecycle: stabilized,
+                latestAssistantLine: replyNow
+            )
             TaskSessionTextToolkit.updateTaskPanelMemory(
                 promptNow: promptNow,
                 replyNow: replyNow,
@@ -99,6 +117,7 @@ final class TaskSessionEngine: ObservableObject {
         }
 
         snapshotsBySessionID = next
+        transcriptCache.flushIfNeeded()
     }
 
     private func resolveStrategy(for session: CapturedTerminalSession) -> any TaskSessionStrategy {

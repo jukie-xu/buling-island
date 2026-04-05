@@ -237,16 +237,77 @@ final class RelaFixtureConsistencyTests: XCTestCase {
         XCTAssertEqual(iTerm.snapshot.secondaryText, prompt)
     }
 
+    func testCompletedCodexTaskCardBodyIsConsistentAcrossSupportedTerminals() throws {
+        let runningTail = """
+        › 提交并推送
+
+        • Working (21s • esc to interrupt)
+        """
+        let doneTail = """
+        >_ OpenAI Codex (v0.118.0)
+        model: gpt-5.4 medium    /model to change
+        directory: ~/git/buling-island
+
+        › 提交并推送
+
+        • 我已经确认当前在 main 分支，有一批已修改和新增文件待提交。
+
+        ✔ You approved codex to run git push origin main this time
+
+        • 已提交，提交号是 7690fa3，提交信息是 feat: 完善任务面板文本渲染与终端捕获一致性。
+
+          推送没有成功完成。当前仓库状态还是 main...origin/main [ahead 1]
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 97% left · ~/git/buling-island
+        """
+
+        for kind in [TerminalKind.iTerm2, .iTermLegacy, .appleTerminal] {
+            let snapshot = try snapshotAfterRunningThenIdle(
+                terminalKind: kind,
+                title: kind == .appleTerminal ? "buling-island" : "buling-island (codex)",
+                runningTail: runningTail,
+                idleTail: doneTail,
+                nativeID: "done-\(kind.rawValue)"
+            )
+
+            XCTAssertEqual(snapshot.lifecycle, .idle, "lifecycle mismatch for \(kind.rawValue)")
+            XCTAssertEqual(
+                snapshot.secondaryText,
+                "提交并推送\n\(TaskSessionTextToolkit.taskPanelCompletedLine)",
+                "secondaryText mismatch for \(kind.rawValue)"
+            )
+            let lines = TaskSessionTextToolkit.taskPanelDisplayLines(from: snapshot.secondaryText)
+            XCTAssertEqual(lines.primary, "提交并推送", "prompt line mismatch for \(kind.rawValue)")
+            XCTAssertEqual(lines.secondary, TaskSessionTextToolkit.taskPanelCompletedLine, "status line mismatch for \(kind.rawValue)")
+        }
+    }
+
     private func evaluateFixture(named name: String, title: String) throws -> EvaluatedFixture {
         let tail = try loadFixture(named: name)
         return try evaluateInlineSession(title: title, tail: tail, nativeID: name)
     }
 
     private func evaluateInlineSession(title: String, tail: String, nativeID: String) throws -> EvaluatedFixture {
+        try evaluateInlineSession(
+            title: title,
+            tail: tail,
+            nativeID: nativeID,
+            terminalKind: .iTerm2
+        )
+    }
+
+    private func evaluateInlineSession(
+        title: String,
+        tail: String,
+        nativeID: String,
+        terminalKind: TerminalKind
+    ) throws -> EvaluatedFixture {
         let session = CapturedTerminalSession(
             nativeSessionId: nativeID,
             backendIdentifier: "fixture.backend",
-            terminalKind: .iTerm2,
+            terminalKind: terminalKind,
             title: title,
             tty: "ttys-fixture",
             tailOutput: tail
@@ -272,6 +333,42 @@ final class RelaFixtureConsistencyTests: XCTestCase {
             snapshot: snapshot,
             signal: signal
         )
+    }
+
+    private func snapshotAfterRunningThenIdle(
+        terminalKind: TerminalKind,
+        title: String,
+        runningTail: String,
+        idleTail: String,
+        nativeID: String
+    ) throws -> TaskSessionSnapshot {
+        let engine = TaskSessionEngine(strategies: TaskSessionStrategyRegistry.resolvedStrategies())
+        let sessionRunning = CapturedTerminalSession(
+            nativeSessionId: nativeID,
+            backendIdentifier: "fixture.backend",
+            terminalKind: terminalKind,
+            title: title,
+            tty: "ttys-fixture",
+            tailOutput: runningTail
+        )
+        engine.refresh(
+            sessions: [sessionRunning],
+            now: Date(timeIntervalSince1970: 1_764_662_400)
+        )
+
+        let sessionIdle = CapturedTerminalSession(
+            nativeSessionId: nativeID,
+            backendIdentifier: "fixture.backend",
+            terminalKind: terminalKind,
+            title: title,
+            tty: "ttys-fixture",
+            tailOutput: idleTail
+        )
+        engine.refresh(
+            sessions: [sessionIdle],
+            now: Date(timeIntervalSince1970: 1_764_662_410)
+        )
+        return try XCTUnwrap(engine.snapshotsBySessionID[sessionIdle.id])
     }
 
     private func availableFixtureNames() -> [String] {

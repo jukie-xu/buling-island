@@ -9,6 +9,7 @@ struct IslandView: View {
     @StateObject private var claudeCLI = ClaudeCLIService()
     @StateObject private var terminalCapture = TerminalCaptureService()
     @StateObject private var taskSessionEngine = TaskSessionEngine()
+    @StateObject private var taskPanelState = TaskPanelStateStore()
     @State private var isLaunchpadEditing = false
     @State private var claudeInteractionHint: String?
     @State private var claudePillStatusText: String?
@@ -25,20 +26,16 @@ struct IslandView: View {
     @State private var taskBreathPhase = false
     @State private var taskWavePhase = false
     @State private var pillSuppressedIssueUntil: [String: Date] = [:]
-    @State private var taskPanelPinnedSessionIDs: Set<String> = []
-    @State private var taskPanelPinnedOrder: [String] = []
-    @State private var taskPanelOrderByGroupBucket: [String: [String]] = [:]
-    @State private var cachedTaskGroups: [TaskBoardGroup] = []
     @State private var taskPanelDraggingSessionID: String?
     @State private var taskPanelDraggingGroupName: String?
     @State private var taskPanelDraggingBucket: TaskSortBucket?
-    @State private var taskPanelSortStateLoaded = false
     @State private var taskPanelRowFrames: [String: CGRect] = [:]
     @State private var taskPanelDragStartLocation: CGPoint = .zero
     @State private var taskPanelDragOffset: CGSize = .zero
     @State private var taskPanelDropTargetSessionID: String?
     @State private var taskPanelDropInsertAfter: Bool = false
     @State private var taskInteractionSelections: [String: Set<String>] = [:]
+    @State private var deliveredPillEventKeys: Set<String> = []
 
     private var fillColor: Color {
         .primary
@@ -105,7 +102,7 @@ struct IslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             claudeCLI.ensureDetected()
-            loadTaskPanelSortStateIfNeeded()
+            taskPanelState.loadIfNeeded()
             viewModel.syncCollapsedPillTone(claudePillStatusTone)
             if viewModel.state == .collapsed {
                 pillHud.start()
@@ -218,7 +215,10 @@ struct IslandView: View {
         }
         .onChange(of: terminalCapture.sessions) { _ in
             refreshTaskSnapshots()
-            reconcileTaskPanelSortStateWithLiveSessions()
+            taskPanelState.rebuild(
+                sessions: terminalCapture.sessions,
+                snapshotsBySessionID: taskSessionEngine.snapshotsBySessionID
+            )
         }
         .onChange(of: terminalCapture.statusRevision) { _ in
             let latestSourceMuted: Bool = {
@@ -237,6 +237,11 @@ struct IslandView: View {
             if let text = terminalCapture.latestStatusText, !text.isEmpty {
                 let tone = terminalCapture.latestStatusTone
                 if tone == "warn" || tone == "error" || tone == "success" {
+                    if let eventKey = currentPillEventKey(text: text, tone: tone),
+                       deliveredPillEventKeys.contains(eventKey) {
+                        claudeInteractionHint = terminalCapture.interactionHint.flatMap { $0.isEmpty ? nil : $0 }
+                        return
+                    }
                     if tone == "warn" {
                         if isPillIssueSuppressed(text: text, tone: tone) {
                             return
@@ -264,6 +269,10 @@ struct IslandView: View {
                             return
                         }
                         claudePillStatusText = text
+                    }
+                    if let deliveredKey = currentPillEventKey(text: claudePillStatusText ?? text, tone: tone) {
+                        deliveredPillEventKeys.insert(deliveredKey)
+                        trimDeliveredPillEventKeysIfNeeded()
                     }
                     claudePillStatusTone = tone
                     claudeStatusRevision &+= 1
@@ -451,7 +460,7 @@ struct IslandView: View {
 
     @ViewBuilder
     private var claudePillBottomHint: some View {
-        if shouldShowClaudeBottomHint, let text = claudePillStatusText, !text.isEmpty {
+        if shouldShowClaudeBottomHint, let text = effectiveBottomHintText, !text.isEmpty {
             let isWarning = claudePillStatusTone == "warn"
             let isError = claudePillStatusTone == "error"
             let isSuccess = claudePillStatusTone == "success"
@@ -484,6 +493,21 @@ struct IslandView: View {
         } else {
             EmptyView()
         }
+    }
+
+    private var effectiveBottomHintText: String? {
+        guard let text = claudePillStatusText, !text.isEmpty else { return nil }
+        guard claudePillStatusTone == "success" else { return text }
+
+        if let sessionID = terminalCapture.latestStatusSourceSessionID,
+           let snapshot = taskSessionEngine.snapshotsBySessionID[sessionID] {
+            return TaskSessionTextToolkit.taskCompletedBottomHintText(
+                strategyID: snapshot.strategyID,
+                strategyDisplayName: snapshot.strategyDisplayName
+            )
+        }
+
+        return "Claude 任务执行完成"
     }
 
     @ViewBuilder
@@ -1056,339 +1080,51 @@ struct IslandView: View {
     }
 
     private var claudeTaskBoardSection: some View {
-        Group {
-            if !shouldShowTaskPanelEmptyPlaceholder {
-                ScrollView {
-                    ZStack(alignment: .topLeading) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(taskGroups, id: \.id) { group in
-                                VStack(alignment: .leading, spacing: 7) {
-                                    HStack {
-                                        Text(group.name)
-                                            .font(.system(size: taskFontBase, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.88))
-                                        Spacer()
-                                        Text("\(group.tasks.count) 个任务")
-                                            .font(.system(size: max(9, taskFontBase - 2)))
-                                            .foregroundStyle(.white.opacity(0.58))
-                                    }
-
-                                    if group.tasks.isEmpty {
-                                        Text("暂无捕获任务")
-                                            .font(.system(size: max(10, taskFontBase - 1)))
-                                            .foregroundStyle(.white.opacity(0.42))
-                                            .padding(.vertical, 6)
-                                    } else {
-                                        ForEach(group.tasks, id: \.session.id) { item in
-                                            taskBoardRowView(item: item, in: group)
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 9)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(Color.white.opacity(0.04))
-                                )
-                            }
-                        }
-                        .padding(.top, 2)
-
-                        if let draggingID = taskPanelDraggingSessionID,
-                           let preview = taskBoardRowLookup(sessionID: draggingID),
-                           let frame = taskPanelRowFrames[draggingID] {
-                            taskBoardRowView(item: preview.item, in: preview.group, isFloatingPreview: true)
-                                .frame(width: frame.width)
-                                .position(
-                                    x: taskPanelDragStartLocation.x + taskPanelDragOffset.width,
-                                    y: taskPanelDragStartLocation.y + taskPanelDragOffset.height
-                                )
-                                .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 8)
-                                .allowsHitTesting(false)
-                                .zIndex(20)
-                        }
-                    }
-                    .coordinateSpace(name: "task-board-list")
-                    .onPreferenceChange(TaskBoardRowFramePreferenceKey.self) { frames in
-                        taskPanelRowFrames = frames
-                    }
-                }
-            } else {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    Text(taskPanelEmptyPlaceholderText)
-                        .font(.system(size: max(12, taskFontBase)))
-                        .foregroundStyle(Color.white.opacity(0.42))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .accessibilityLabel(taskPanelEmptyPlaceholderText)
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        TaskPanelView(
+            isTerminalHostReachable: terminalCapture.isTerminalHostReachable,
+            sessions: terminalCapture.sessions,
+            groups: taskGroups,
+            taskFontBase: taskFontBase,
+            taskBreathPhase: taskBreathPhase,
+            taskWavePhase: taskWavePhase,
+            draggingSessionID: taskPanelDraggingSessionID,
+            dragStartLocation: taskPanelDragStartLocation,
+            dragOffset: taskPanelDragOffset,
+            rowFrames: taskPanelRowFrames,
+            dropTargetSessionID: taskPanelDropTargetSessionID,
+            dropInsertAfter: taskPanelDropInsertAfter,
+            isSessionMuted: { terminalCapture.isSessionMuted($0) },
+            isSessionPinned: { taskPanelState.isPinned(sessionID: $0) },
+            onTogglePinned: { toggleTaskPinned($0) },
+            onToggleMuted: { terminalCapture.setSessionMuted($1, sessionID: $0) },
+            onActivateSession: { jumpToExternalTask(session: $0) },
+            dragGestureForRow: { sessionID, groupName, bucket in
+                AnyGesture(taskBoardRowDragGesture(sessionID: sessionID, groupName: groupName, bucket: bucket))
+            },
+            rowLookup: { taskBoardRowLookup(sessionID: $0) },
+            onRowFramesChanged: { taskPanelRowFrames = $0 }
+        )
     }
-
-    private var taskPanelEmptyPlaceholderText: String {
-        if !settings.claudeEnableITerm2Capture {
-            return "终端检测已关闭"
-        }
-        if !terminalCapture.isTerminalHostReachable {
-            return "未检测到运行中的终端宿主"
-        }
-        if terminalCapture.sessions.isEmpty {
-            return "终端已运行，暂无可解析会话"
-        }
-        return "未检测到活动中的终端"
-    }
-
-    private struct TaskBoardRow: Hashable {
-        let session: CapturedTerminalSession
-        let snapshot: TaskSessionSnapshot
-    }
-
-    private struct TaskBoardGroup: Hashable {
-        let id: String
-        let name: String
-        let isPinned: Bool
-        let tasks: [TaskBoardRow]
-    }
-
-    private enum TaskSortBucket: String, Hashable {
-        case abnormal
-        case running
-        case completed
-        case notRunning
-        case pinned
-    }
-
-    private struct TaskBoardRowFramePreferenceKey: PreferenceKey {
-        static var defaultValue: [String: CGRect] = [:]
-        static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-            value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-        }
-    }
-
-    private static let taskPanelPinnedSessionIDsDefaultsKey = "taskPanel.pinned.sessionIDs.v1"
-    private static let taskPanelPinnedOrderDefaultsKey = "taskPanel.pinned.order.v1"
-    private static let taskPanelGroupBucketOrderDefaultsKey = "taskPanel.groupBucket.order.v1"
 
     private var taskGroups: [TaskBoardGroup] {
-        cachedTaskGroups
-    }
-
-    private func taskGroupDisplayName(for row: TaskBoardRow) -> String {
-        let app = row.session.captureGroupKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        return app.isEmpty ? "iTerm" : app
-    }
-
-    private func sortedRowsForGroup(_ rows: [TaskBoardRow], groupName: String) -> [TaskBoardRow] {
-        let byBucket = Dictionary(grouping: rows, by: { taskSortBucket(for: $0.snapshot) })
-        let statusOrder: [TaskSortBucket] = [.abnormal, .running, .completed, .notRunning]
-        return statusOrder.flatMap { bucket in
-            let base = (byBucket[bucket] ?? []).sorted {
-                $0.session.title.localizedStandardCompare($1.session.title) == .orderedAscending
-            }
-            let key = taskGroupBucketStorageKey(groupName: groupName, bucket: bucket)
-            return applyCustomOrder(base, orderedIDs: taskPanelOrderByGroupBucket[key] ?? [])
-        }
-    }
-
-    private func applyCustomOrder(_ rows: [TaskBoardRow], orderedIDs: [String]) -> [TaskBoardRow] {
-        let byID = Dictionary(uniqueKeysWithValues: rows.map { ($0.session.id, $0) })
-        var result: [TaskBoardRow] = []
-        var used = Set<String>()
-        for id in orderedIDs {
-            guard let row = byID[id] else { continue }
-            result.append(row)
-            used.insert(id)
-        }
-        for row in rows where !used.contains(row.session.id) {
-            result.append(row)
-        }
-        return result
+        taskPanelState.groups
     }
 
     private func taskSortBucket(for snapshot: TaskSessionSnapshot) -> TaskSortBucket {
-        switch snapshot.lifecycle {
-        case .error, .waitingInput: return .abnormal
-        case .running: return .running
-        case .success: return .completed
-        case .idle, .inactiveTool: return .notRunning
-        }
+        taskPanelState.taskSortBucket(for: snapshot)
     }
 
     private func taskGroupBucketStorageKey(groupName: String, bucket: TaskSortBucket) -> String {
-        "\(groupName)|\(bucket.rawValue)"
-    }
-
-    @ViewBuilder
-    private func taskBoardRowView(item: TaskBoardRow, in group: TaskBoardGroup, isFloatingPreview: Bool = false) -> some View {
-        let task = item.session
-        let snap = item.snapshot
-        let isMuted = terminalCapture.isSessionMuted(task.id)
-        let isPinned = taskPanelPinnedSessionIDs.contains(task.id)
-        let bucket = group.isPinned ? TaskSortBucket.pinned : taskSortBucket(for: snap)
-        let shouldHideOriginal = !isFloatingPreview && taskPanelDraggingSessionID == task.id
-        let showInsertTop = !isFloatingPreview && taskPanelDropTargetSessionID == task.id && !taskPanelDropInsertAfter
-        let showInsertBottom = !isFloatingPreview && taskPanelDropTargetSessionID == task.id && taskPanelDropInsertAfter
-
-        let rowBody = VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .center, spacing: 8) {
-                Circle()
-                    .fill(taskIndicatorColor(tone: snap.renderTone))
-                    .frame(width: 9, height: 9)
-                    .shadow(color: taskIndicatorColor(tone: snap.renderTone).opacity(0.55), radius: snap.isRunning ? 4 : 1, x: 0, y: 0)
-                    .opacity(taskBreathPhase ? 1 : 0.7)
-                    .scaleEffect(taskBreathPhase ? 1 : 0.84)
-
-                if isMuted {
-                    Image(systemName: "speaker.slash.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                }
-
-                Text(task.title.isEmpty ? "Claude 任务" : task.title)
-                    .font(.system(size: taskFontBase, weight: .semibold))
-                    .foregroundStyle(.white.opacity(isMuted ? 0.82 : 0.93))
-                    .lineLimit(1)
-
-                Spacer(minLength: 6)
-
-                Button {
-                    toggleTaskPinned(task.id)
-                } label: {
-                    Image(systemName: isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(isPinned ? 0.92 : 0.62))
-                }
-                .buttonStyle(.plain)
-                .help(isPinned ? "取消置顶" : "全局置顶")
-
-                HStack(spacing: 6) {
-                    Toggle(
-                        "Mute",
-                        isOn: Binding(
-                            get: { isMuted },
-                            set: { terminalCapture.setSessionMuted($0, sessionID: task.id) }
-                        )
-                    )
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .tint(isMuted ? Color(red: 0.33, green: 0.46, blue: 0.62) : Color(white: 0.22))
-                    .labelsHidden()
-                    .help("静音该会话：不再在 pill 提醒")
-
-                    Text("Mute")
-                        .font(.system(size: max(8, taskFontBase - 3), weight: .semibold))
-                        .foregroundStyle(.white.opacity(isMuted ? 0.94 : 0.55))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(isMuted ? Color(red: 0.20, green: 0.26, blue: 0.33).opacity(0.9) : Color.white.opacity(0.07))
-                )
-            }
-
-            if snap.lifecycle == .waitingInput {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("您的任务需要手工确认。")
-                        .font(.system(size: max(9, taskFontBase - 1), weight: .semibold))
-                        .foregroundStyle(.orange.opacity(0.96))
-                    Text(snap.detailText ?? snap.secondaryText)
-                        .font(.system(size: max(8, taskFontBase - 2), weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(isMuted ? 0.7 : 0.82))
-                        .lineLimit(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("请点击任务前往终端处理。")
-                        .font(.system(size: max(8, taskFontBase - 3), weight: .medium))
-                        .foregroundStyle(.white.opacity(0.58))
-                }
-            } else {
-                Text(snap.secondaryText)
-                    .font(.system(size: taskFontBase, weight: .medium))
-                    .foregroundStyle(.white.opacity(isMuted ? 0.68 : (snap.isRunning ? (taskBreathPhase ? 0.9 : 0.72) : 0.82)))
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-            }
-
-            HStack(spacing: 6) {
-                Text(snap.strategyDisplayName)
-                Text("·")
-                Text(task.terminalKind.rawValue)
-                Text("·")
-                Text(task.tty.isEmpty ? "tty 未知" : task.tty)
-            }
-            .font(.system(size: max(9, taskFontBase - 2), weight: .medium))
-            .foregroundStyle(.white.opacity(isMuted ? 0.45 : 0.52))
-            .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(taskRowBackgroundColor(tone: snap.renderTone, isMuted: isMuted))
-                .overlay {
-                    if snap.isRunning {
-                        taskRunningWaveOverlay(isMuted: isMuted)
-                    }
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(taskRowBorderColor(tone: snap.renderTone, isMuted: isMuted), lineWidth: 1)
-                )
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(alignment: .top) {
-            if showInsertTop {
-                Rectangle()
-                    .fill(Color.white.opacity(0.92))
-                    .frame(height: 2)
-                    .padding(.horizontal, 4)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if showInsertBottom {
-                Rectangle()
-                    .fill(Color.white.opacity(0.92))
-                    .frame(height: 2)
-                    .padding(.horizontal, 4)
-            }
-        }
-        .opacity(shouldHideOriginal ? 0.02 : 1)
-
-        if isFloatingPreview {
-            rowBody
-        } else {
-            rowBody
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: TaskBoardRowFramePreferenceKey.self,
-                            value: [task.id: proxy.frame(in: .named("task-board-list"))]
-                        )
-                    }
-                )
-                .onTapGesture { jumpToExternalTask(session: task) }
-                .simultaneousGesture(
-                    taskBoardRowDragGesture(
-                        sessionID: task.id,
-                        groupName: group.name,
-                        bucket: bucket
-                    )
-                )
-        }
+        taskPanelState.taskGroupBucketStorageKey(groupName: groupName, bucket: bucket)
     }
 
     private func taskBoardRowDragGesture(
         sessionID: String,
         groupName: String,
         bucket: TaskSortBucket
-    ) -> some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .named("task-board-list"))
+    ) -> AnyGesture<DragGesture.Value> {
+        AnyGesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .named("task-board-list"))
             .onChanged { drag in
                 if taskPanelDraggingSessionID == nil {
                     taskPanelDraggingSessionID = sessionID
@@ -1412,6 +1148,7 @@ struct IslandView: View {
                 }
                 clearTaskDragState()
             }
+        )
     }
 
     private func updateTaskDragDropTarget(pointerLocation: CGPoint) {
@@ -1466,24 +1203,22 @@ struct IslandView: View {
               let targetID = taskPanelDropTargetSessionID else { return }
 
         if draggingBucket == .pinned {
-            var ids = taskPanelPinnedOrder
+            var ids = taskPanelState.pinnedOrder
             moveElementRelative(in: &ids, movingID: draggingID, targetID: targetID, insertAfter: taskPanelDropInsertAfter)
-            taskPanelPinnedOrder = ids
-            persistTaskPanelSortState()
-            cachedTaskGroups = rebuildTaskGroups()
+            taskPanelState.applyPinnedReorder(ids: ids)
+            taskPanelState.rebuild(sessions: terminalCapture.sessions, snapshotsBySessionID: taskSessionEngine.snapshotsBySessionID)
             return
         }
 
         let key = taskGroupBucketStorageKey(groupName: draggingGroup, bucket: draggingBucket)
-        var ids = taskPanelOrderByGroupBucket[key] ?? []
+        var ids = taskPanelState.orderByGroupBucket[key] ?? []
         let visibleIDs = taskVisibleRowIDs(groupName: draggingGroup, bucket: draggingBucket)
         for id in visibleIDs where !ids.contains(id) {
             ids.append(id)
         }
         moveElementRelative(in: &ids, movingID: draggingID, targetID: targetID, insertAfter: taskPanelDropInsertAfter)
-        taskPanelOrderByGroupBucket[key] = ids
-        persistTaskPanelSortState()
-        cachedTaskGroups = rebuildTaskGroups()
+        taskPanelState.applyGroupBucketReorder(groupName: draggingGroup, bucket: draggingBucket, ids: ids)
+        taskPanelState.rebuild(sessions: terminalCapture.sessions, snapshotsBySessionID: taskSessionEngine.snapshotsBySessionID)
     }
 
     private func moveElementRelative(in ids: inout [String], movingID: String, targetID: String, insertAfter: Bool) {
@@ -1496,24 +1231,11 @@ struct IslandView: View {
     }
 
     private func taskVisibleRowIDs(groupName: String, bucket: TaskSortBucket) -> [String] {
-        taskGroups
-            .first(where: { $0.name == groupName })?
-            .tasks
-            .filter { row in
-                let current = row.snapshot
-                let rowBucket = bucket == .pinned ? TaskSortBucket.pinned : taskSortBucket(for: current)
-                return rowBucket == bucket
-            }
-            .map(\.session.id) ?? []
+        taskPanelState.visibleRowIDs(groupName: groupName, bucket: bucket)
     }
 
     private func taskBoardRowLookup(sessionID: String) -> (item: TaskBoardRow, group: TaskBoardGroup)? {
-        for group in taskGroups {
-            if let item = group.tasks.first(where: { $0.session.id == sessionID }) {
-                return (item, group)
-            }
-        }
-        return nil
+        taskPanelState.rowLookup(sessionID: sessionID)
     }
 
     private func clearTaskDragState() {
@@ -1527,60 +1249,8 @@ struct IslandView: View {
     }
 
     private func toggleTaskPinned(_ sessionID: String) {
-        if taskPanelPinnedSessionIDs.contains(sessionID) {
-            taskPanelPinnedSessionIDs.remove(sessionID)
-            taskPanelPinnedOrder.removeAll { $0 == sessionID }
-        } else {
-            taskPanelPinnedSessionIDs.insert(sessionID)
-            if !taskPanelPinnedOrder.contains(sessionID) {
-                taskPanelPinnedOrder.append(sessionID)
-            }
-        }
-        reconcileTaskPanelSortStateWithLiveSessions()
-        persistTaskPanelSortState()
-        cachedTaskGroups = rebuildTaskGroups()
-    }
-
-    private func loadTaskPanelSortStateIfNeeded() {
-        guard !taskPanelSortStateLoaded else { return }
-        taskPanelSortStateLoaded = true
-        let defaults = UserDefaults.standard
-        if let pinned = defaults.array(forKey: Self.taskPanelPinnedSessionIDsDefaultsKey) as? [String] {
-            taskPanelPinnedSessionIDs = Set(pinned)
-        }
-        if let order = defaults.array(forKey: Self.taskPanelPinnedOrderDefaultsKey) as? [String] {
-            taskPanelPinnedOrder = order
-        }
-        if let map = defaults.dictionary(forKey: Self.taskPanelGroupBucketOrderDefaultsKey) as? [String: [String]] {
-            taskPanelOrderByGroupBucket = map
-        }
-        reconcileTaskPanelSortStateWithLiveSessions()
-        cachedTaskGroups = rebuildTaskGroups()
-    }
-
-    private func persistTaskPanelSortState() {
-        let defaults = UserDefaults.standard
-        defaults.set(Array(taskPanelPinnedSessionIDs), forKey: Self.taskPanelPinnedSessionIDsDefaultsKey)
-        defaults.set(taskPanelPinnedOrder, forKey: Self.taskPanelPinnedOrderDefaultsKey)
-        defaults.set(taskPanelOrderByGroupBucket, forKey: Self.taskPanelGroupBucketOrderDefaultsKey)
-    }
-
-    private func reconcileTaskPanelSortStateWithLiveSessions() {
-        guard taskPanelSortStateLoaded else { return }
-        let liveIDs = Set(terminalCapture.sessions.map(\.id))
-        taskPanelPinnedSessionIDs = taskPanelPinnedSessionIDs.intersection(liveIDs)
-        taskPanelPinnedOrder = taskPanelPinnedOrder.filter { taskPanelPinnedSessionIDs.contains($0) }
-
-        var cleaned: [String: [String]] = [:]
-        for (key, ids) in taskPanelOrderByGroupBucket {
-            let kept = ids.filter { liveIDs.contains($0) && !taskPanelPinnedSessionIDs.contains($0) }
-            if !kept.isEmpty {
-                cleaned[key] = kept
-            }
-        }
-        taskPanelOrderByGroupBucket = cleaned
-        persistTaskPanelSortState()
-        cachedTaskGroups = rebuildTaskGroups()
+        taskPanelState.togglePinned(sessionID: sessionID)
+        taskPanelState.rebuild(sessions: terminalCapture.sessions, snapshotsBySessionID: taskSessionEngine.snapshotsBySessionID)
     }
 
     @ViewBuilder
@@ -1810,47 +1480,7 @@ struct IslandView: View {
 
     private func refreshTaskSnapshots() {
         taskSessionEngine.refresh(sessions: terminalCapture.sessions)
-        cachedTaskGroups = rebuildTaskGroups()
-    }
-
-    private func rebuildTaskGroups() -> [TaskBoardGroup] {
-        let rows: [TaskBoardRow] = terminalCapture.sessions.compactMap { session in
-            guard let snap = taskSessionEngine.snapshotsBySessionID[session.id] else { return nil }
-            return TaskBoardRow(session: session, snapshot: snap)
-        }
-        let rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.session.id, $0) })
-        let pinnedRows = taskPanelPinnedOrder.compactMap { rowsByID[$0] }
-        let pinnedIDs = Set(pinnedRows.map(\.session.id))
-        let nonPinnedRows = rows.filter { !pinnedIDs.contains($0.session.id) }
-        let rowsByGroup = Dictionary(grouping: nonPinnedRows, by: taskGroupDisplayName(for:))
-
-        var result: [TaskBoardGroup] = []
-        if !pinnedRows.isEmpty {
-            result.append(TaskBoardGroup(id: "task-group-pinned", name: "置顶", isPinned: true, tasks: pinnedRows))
-        }
-
-        let preferred = ["iTerm", "Terminal"]
-        for name in preferred where rowsByGroup[name] != nil {
-            result.append(
-                TaskBoardGroup(
-                    id: "task-group-\(name)",
-                    name: name,
-                    isPinned: false,
-                    tasks: sortedRowsForGroup(rowsByGroup[name] ?? [], groupName: name)
-                )
-            )
-        }
-        for name in rowsByGroup.keys.filter({ !preferred.contains($0) }).sorted() {
-            result.append(
-                TaskBoardGroup(
-                    id: "task-group-\(name)",
-                    name: name,
-                    isPinned: false,
-                    tasks: sortedRowsForGroup(rowsByGroup[name] ?? [], groupName: name)
-                )
-            )
-        }
-        return result
+        taskPanelState.rebuild(sessions: terminalCapture.sessions, snapshotsBySessionID: taskSessionEngine.snapshotsBySessionID)
     }
 
     private func jumpToExternalTask(session: CapturedTerminalSession) {
@@ -1922,95 +1552,6 @@ struct IslandView: View {
         }
     }
 
-    private func taskIndicatorColor(tone: TaskRenderTone) -> Color {
-        switch tone {
-        case .error:
-            return Color.red.opacity(0.92)
-        case .warning:
-            return Color.orange.opacity(0.95)
-        case .running:
-            return Color.green.opacity(0.95)
-        case .success:
-            return Color.green.opacity(0.95)
-        case .inactive:
-            return Color.gray.opacity(0.85)
-        case .neutral:
-            return Color.green.opacity(0.95)
-        }
-    }
-
-    private func taskRowBackgroundColor(
-        tone: TaskRenderTone,
-        isMuted: Bool
-    ) -> Color {
-        let base: Color = {
-            switch tone {
-            case .neutral:
-                return Color.green.opacity(0.14)
-            case .inactive:
-                return Color.gray.opacity(0.14)
-            case .running:
-                return Color.green.opacity(0.16)
-            case .success:
-                return Color.green.opacity(0.14)
-            case .warning:
-                return Color.orange.opacity(0.14)
-            case .error:
-                return Color.red.opacity(0.16)
-            }
-        }()
-        if isMuted { return base.opacity(0.35) }
-        return base
-    }
-
-    private func taskRowBorderColor(
-        tone: TaskRenderTone,
-        isMuted: Bool
-    ) -> Color {
-        let base: Color = {
-            switch tone {
-            case .neutral:
-                return Color.green.opacity(0.30)
-            case .inactive:
-                return Color.gray.opacity(0.28)
-            case .running:
-                return Color.green.opacity(0.34)
-            case .success:
-                return Color.green.opacity(0.30)
-            case .warning:
-                return Color.orange.opacity(0.34)
-            case .error:
-                return Color.red.opacity(0.34)
-            }
-        }()
-        if isMuted { return base.opacity(0.45) }
-        return base
-    }
-
-    @ViewBuilder
-    private func taskRunningWaveOverlay(isMuted: Bool) -> some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.00),
-                            Color.white.opacity(isMuted ? 0.03 : 0.06),
-                            Color.white.opacity(0.00)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(width: width * 0.68)
-                .offset(x: taskWavePhase ? width * 0.24 : -width * 0.24)
-                .blur(radius: 7)
-        }
-        .allowsHitTesting(false)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
     private func stopClaudeRightSlotFlash() {
         claudeRightSlotFlashVisible = false
         claudeRightSlotFlashPulse = false
@@ -2037,10 +1578,26 @@ struct IslandView: View {
     }
 
     private func pillIssueKey(text: String, tone: String) -> String {
-        var normalized = text.lowercased()
-        normalized = normalized.replacingOccurrences(of: "[0-9a-f]{6,}", with: "#", options: .regularExpression)
-        normalized = normalized.replacingOccurrences(of: "\\b\\d+\\b", with: "#", options: .regularExpression)
+        let normalized = TaskSessionTextToolkit.normalizePillFingerprintText(text)
         return "\(tone)|\(normalized)"
+    }
+
+    private func currentPillEventKey(text: String, tone: String) -> String? {
+        guard tone == "success" || tone == "error" || tone == "warn" else { return nil }
+        let sessionID = terminalCapture.latestStatusSourceSessionID ?? "global"
+        let snapshot = terminalCapture.latestStatusSourceSessionID.flatMap { taskSessionEngine.snapshotsBySessionID[$0] }
+        return TaskSessionTextToolkit.taskPillEventFingerprint(
+            sessionID: sessionID,
+            snapshot: snapshot,
+            fallbackText: text,
+            tone: tone
+        )
+    }
+
+    private func trimDeliveredPillEventKeysIfNeeded() {
+        if deliveredPillEventKeys.count > 128 {
+            deliveredPillEventKeys = Set(deliveredPillEventKeys.suffix(96))
+        }
     }
 
 }

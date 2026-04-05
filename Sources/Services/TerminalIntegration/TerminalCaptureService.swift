@@ -1,5 +1,18 @@
 import Foundation
 
+enum TerminalSessionLifecyclePhase: Equatable {
+    case active
+    case missing
+}
+
+struct TerminalSessionLifecycleState: Equatable {
+    let phase: TerminalSessionLifecyclePhase
+    let lastSeenAt: Date
+    let lastChangedAt: Date?
+    let unchangedPollCount: Int
+    let missingPollCount: Int
+}
+
 /// 聚合多个 `TerminalSessionCaptureBackend` 的轮询与 UI 状态；对外保持与原 `ITerm2IntegrationService` 相当的观察接口。
 @MainActor
 final class TerminalCaptureService: ObservableObject {
@@ -17,6 +30,7 @@ final class TerminalCaptureService: ObservableObject {
     @Published private(set) var statusRevision: Int = 0
     @Published private(set) var mutedSessionIDs: Set<String> = []
     @Published private(set) var activeSessionIDs: Set<String> = []
+    @Published private(set) var sessionLifecycleByID: [String: TerminalSessionLifecycleState] = [:]
 
     private let backends: [TerminalSessionCaptureBackend]
     private let hostHealthProbes: [TerminalHostHealthProbe]
@@ -29,6 +43,7 @@ final class TerminalCaptureService: ObservableObject {
     private var consecutiveFailures = 0
     private var sessionDigest: [String: Int] = [:]
     private var sessionLastChangedAt: [String: Date] = [:]
+    private let sessionMissingGracePolls = 2
     private var acknowledgedErrorUntil: [String: Date] = [:]
     private var acknowledgedSessionSignatureUntil: [String: Date] = [:]
     /// 历史键名保留，避免用户升级后静音列表清空。
@@ -113,6 +128,8 @@ final class TerminalCaptureService: ObservableObject {
         acknowledgedErrorUntil.removeAll()
         acknowledgedSessionSignatureUntil.removeAll()
         sessionLastChangedAt.removeAll()
+        sessionDigest.removeAll()
+        sessionLifecycleByID.removeAll()
         activeSessionIDs = []
         statusRevision &+= 1
     }
@@ -309,33 +326,39 @@ final class TerminalCaptureService: ObservableObject {
             let oldInteractionHint = interactionHint
             let oldLastError = lastError
             let oldActiveSessionIDs = activeSessionIDs
+            let oldSessionLifecycleByID = sessionLifecycleByID
             isTerminalHostReachable = hasRunningHost
             lastError = nil
 
             let rows = merged.sessions
+            let now = Date()
             if sessions != rows {
                 sessions = rows
             }
+            reconcileSessionLifecycle(with: rows, now: now)
 
             var bestStatus: (score: Int, text: String, tone: String, rowID: String, tail: String)?
             var hintText: String?
-            let now = Date()
             for row in rows {
                 if isSessionMuted(session: row) {
                     continue
                 }
                 let normalizedTail = row.standardizedTailOutput
                 let digest = normalizedTail.hashValue
-                if sessionDigest[row.id] == digest {
-                    continue
+                let didChange = sessionDigest[row.id] != digest
+                if didChange {
+                    sessionDigest[row.id] = digest
+                    sessionLastChangedAt[row.id] = now
                 }
-                sessionDigest[row.id] = digest
-                sessionLastChangedAt[row.id] = now
                 let analysis = parseSignal(for: row)
+                let lifecycle = sessionLifecycleByID[row.id]
+                let isLifecycleActive = lifecycle?.phase == .active
+                let isRecentlyChanged = sessionLastChangedAt[row.id].map { now.timeIntervalSince($0) <= 6.0 } ?? didChange
                 if hintText == nil, let hint = analysis.interactionHint, !hint.isEmpty {
                     hintText = hint
                 }
                 if analysis.tone == "error" || analysis.tone == "warn" || analysis.tone == "success" {
+                    guard isLifecycleActive || isRecentlyChanged else { continue }
                     if analysis.tone == "error" {
                         let key = errorKey(for: row.id, signal: analysis)
                         if let until = acknowledgedErrorUntil[key], until > Date() {
@@ -352,6 +375,7 @@ final class TerminalCaptureService: ObservableObject {
                         bestStatus = (score, analysis.summaryText, analysis.tone, row.id, normalizedTail)
                     }
                 } else if interactionHint == nil, analysis.tone == "busy" {
+                    guard isLifecycleActive || isRecentlyChanged else { continue }
                     let score = statusPriority(analysis.tone)
                     if bestStatus == nil || score > bestStatus!.score {
                         bestStatus = (score, analysis.summaryText, analysis.tone, row.id, normalizedTail)
@@ -391,6 +415,7 @@ final class TerminalCaptureService: ObservableObject {
                 || oldInteractionHint != interactionHint
                 || oldLastError != lastError
                 || oldActiveSessionIDs != activeSessionIDs
+                || oldSessionLifecycleByID != sessionLifecycleByID
             {
                 statusRevision &+= 1
             }
@@ -405,8 +430,14 @@ final class TerminalCaptureService: ObservableObject {
         let oldInteractionHint = interactionHint
         let oldLastError = lastError
         let oldActiveSessionIDs = activeSessionIDs
+        let oldSessionLifecycleByID = sessionLifecycleByID
         isTerminalHostReachable = hasRunningHost
         sessions = []
+        if !hasRunningHost {
+            sessionDigest.removeAll()
+            sessionLastChangedAt.removeAll()
+            sessionLifecycleByID.removeAll()
+        }
         latestStatusText = nil
         latestStatusTone = "info"
         latestStatusSourceSessionID = nil
@@ -434,6 +465,7 @@ final class TerminalCaptureService: ObservableObject {
             || oldInteractionHint != interactionHint
             || oldLastError != lastError
             || oldActiveSessionIDs != activeSessionIDs
+            || oldSessionLifecycleByID != sessionLifecycleByID
         {
             statusRevision &+= 1
         }
@@ -473,5 +505,62 @@ final class TerminalCaptureService: ObservableObject {
         s = s.replacingOccurrences(of: "[0-9a-f]{6,}", with: "#", options: .regularExpression)
         s = s.replacingOccurrences(of: "\\b\\d+\\b", with: "#", options: .regularExpression)
         return s
+    }
+
+    private func reconcileSessionLifecycle(with rows: [CapturedTerminalSession], now: Date) {
+        let liveIDs = Set(rows.map(\.id))
+        for session in rows {
+            let normalizedTail = session.standardizedTailOutput
+            let digest = normalizedTail.hashValue
+            let lastChangedAt = sessionLastChangedAt[session.id]
+            let existing = sessionLifecycleByID[session.id]
+            let unchangedPollCount: Int
+            if sessionDigest[session.id] == digest {
+                unchangedPollCount = (existing?.unchangedPollCount ?? 0) + 1
+            } else {
+                unchangedPollCount = 0
+                sessionDigest[session.id] = digest
+                sessionLastChangedAt[session.id] = now
+            }
+
+            sessionLifecycleByID[session.id] = TerminalSessionLifecycleState(
+                phase: .active,
+                lastSeenAt: now,
+                lastChangedAt: sessionLastChangedAt[session.id] ?? lastChangedAt ?? now,
+                unchangedPollCount: unchangedPollCount,
+                missingPollCount: 0
+            )
+        }
+
+        for sessionID in sessionLifecycleByID.keys.sorted() where !liveIDs.contains(sessionID) {
+            guard let existing = sessionLifecycleByID[sessionID] else { continue }
+            let missingPollCount = existing.missingPollCount + 1
+            if missingPollCount >= sessionMissingGracePolls {
+                sessionLifecycleByID.removeValue(forKey: sessionID)
+                sessionDigest.removeValue(forKey: sessionID)
+                sessionLastChangedAt.removeValue(forKey: sessionID)
+                continue
+            }
+            sessionLifecycleByID[sessionID] = TerminalSessionLifecycleState(
+                phase: .missing,
+                lastSeenAt: existing.lastSeenAt,
+                lastChangedAt: existing.lastChangedAt,
+                unchangedPollCount: existing.unchangedPollCount,
+                missingPollCount: missingPollCount
+            )
+        }
+    }
+}
+
+extension TerminalCaptureService {
+    func performTestConsume(merged: MergedFetch) {
+        let previousEnabled = isEnabled
+        if !previousEnabled {
+            isEnabled = true
+        }
+        consume(merged: merged)
+        if !previousEnabled {
+            isEnabled = false
+        }
     }
 }

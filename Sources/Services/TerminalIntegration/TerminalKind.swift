@@ -61,4 +61,15 @@ enum TerminalKind: String, Codable, CaseIterable, Hashable {
             return "Terminal"
         }
     }
+
+    var displayLabel: String {
+        switch self {
+        case .iTerm2:
+            return "iTerm2"
+        case .iTermLegacy:
+            return "iTerm"
+        case .appleTerminal:
+            return "Shell"
+        }
+    }
 }

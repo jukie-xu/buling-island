@@ -33,8 +33,6 @@
       "titleRegex": [],
       "tailContains": [
         "error:",
-        "failed",
-        "exception",
         "traceback",
         "build failed",
         "test failed",
@@ -49,9 +47,8 @@
         "too many requests",
         "429",
         "exited with code",
-        "报错",
-        "失败",
-        "错误"
+        "invalid_request_error",
+        "auth_error"
       ],
       "tailRegex": [
         "(?im)^\\s*error:\\s+",
@@ -61,7 +58,23 @@
         "(?i)\\brate[_ -]?limited\\b",
         "(?i)\\bhit\\s+(?:your|the\\s+)?rate[_ -]?limit",
         "(?i)\\b429\\s+too many\\b",
-        "(?i)\\bhttp\\s*429\\b"
+        "(?i)\\bhttp\\s*429\\b",
+        "(?i)(?:git\\s+)?(?:push|pull|fetch|clone)\\s+[^\\n]{0,200}\\bfatal:\\b",
+        "(?i)\\bfatal:\\s*",
+        "(?i)\\btraceback\\b",
+        "(?i)\\buncaught\\s+exception\\b",
+        "(?i)\\bexception:\\s+",
+        "(?i)(?:command|operation|request|build|test|npm|yarn|pnpm|cargo)\\s+[^\\n]{0,160}\\bfailed\\b",
+        "(?i)\\bfailed\\s+to\\s+(?:connect|resolve|open|read|write|access|authenticate|parse)\\b",
+        "(?i)\\bfailed\\s+with\\s+(?:status|code|error)\\b",
+        "(?i)\"error\"\\s*:\\s*\\{",
+        "(?i)(?:推送|拉取|克隆|上传|下载|连接|编译|构建|安装|操作)(?:已|均)?失败",
+        "(?i)(?:命令|脚本|任务|请求|进程)(?:执行|运行)?(?:已|均)?失败",
+        "(?i)(?:命令|请求|操作|进程)(?:已)?(?:异常终止|退出码)",
+        "(?i)未能\\s*(?:完成|连接|推送|拉取|克隆)",
+        "(?i)连接\\s*(?:失败|超时|被拒绝)",
+        "(?i)(?:系统|程序)?(?:报错|出错)[：:.．]",
+        "(?i)发生(?:了)?(?:严重)?错误[：:.．]"
       ]
     },
     "waitingInput": {
@@ -99,7 +112,6 @@
       "tailContains": [
         "• working",
         "esc to interrupt",
-        "summarize recent commits",
         "exec_command",
         "apply_patch",
         "update_plan",
@@ -113,7 +125,6 @@
       ],
       "tailRegex": [
         "(?i)•\\s+working\\b",
-        "(?im)^\\s*›\\s+",
         "(?im)^\\s*gpt-[0-9.]+-codex\\s+.*left\\s+·"
       ]
     },

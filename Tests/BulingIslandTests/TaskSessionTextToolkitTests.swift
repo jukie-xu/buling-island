@@ -213,6 +213,21 @@ final class TaskSessionTextToolkitTests: XCTestCase {
         XCTAssertFalse(TaskSessionTextToolkit.isUserInputCommandLine(">_ OpenAI Codex (v0.118.0)"))
     }
 
+    func testTaskCompletedBottomHintTextUsesFixedVendorSpecificCopy() {
+        XCTAssertEqual(
+            TaskSessionTextToolkit.taskCompletedBottomHintText(strategyID: "codex", strategyDisplayName: "Codex"),
+            "Codex 任务执行完成"
+        )
+        XCTAssertEqual(
+            TaskSessionTextToolkit.taskCompletedBottomHintText(strategyID: "claude", strategyDisplayName: "Claude"),
+            "Claude 任务执行完成"
+        )
+        XCTAssertEqual(
+            TaskSessionTextToolkit.taskCompletedBottomHintText(strategyID: "generic", strategyDisplayName: "Terminal"),
+            "Terminal 任务执行完成"
+        )
+    }
+
     func testTerminalBoxedCodexBannerIsUnwrappedIntoAnalysisText() {
         let tail = """
         ╭──────────────────────────────────────────────╮
@@ -244,5 +259,85 @@ final class TaskSessionTextToolkitTests: XCTestCase {
         let prompt = TaskSessionTextToolkit.extractLatestUserPrompt(from: tail)
 
         XCTAssertEqual(prompt, "提交并推送")
+    }
+
+    func testTaskPanelPresentationUsesFixedTaskAndStatusCopyForSuccess() {
+        let snapshot = TaskSessionSnapshot(
+            sessionID: "session-1",
+            strategyID: "codex",
+            strategyDisplayName: "Codex",
+            lifecycle: .success,
+            renderTone: .success,
+            isRunning: false,
+            secondaryText: "提交并推送\n任务已完成",
+            detailText: nil,
+            interactionOptions: [],
+            interactionPrompt: nil,
+            refreshedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let presentation = TaskSessionTextToolkit.taskPanelPresentation(from: snapshot)
+
+        XCTAssertEqual(presentation.taskLine, "提交并推送")
+        XCTAssertEqual(presentation.statusLine, "任务已完成")
+        XCTAssertNil(presentation.detailLine)
+        XCTAssertEqual(presentation.lifecycleLabel, "完成")
+    }
+
+    func testTaskPanelPresentationUsesWaitingConfirmationCopyAndDetail() {
+        let snapshot = TaskSessionSnapshot(
+            sessionID: "session-2",
+            strategyID: "codex",
+            strategyDisplayName: "Codex",
+            lifecycle: .waitingInput,
+            renderTone: .warning,
+            isRunning: false,
+            secondaryText: "提交并推送\nWould you like to run the following command?",
+            detailText: """
+            Reason: Do you want to allow staging and creating the requested git commit in this repository?
+            $ git add -A && git commit -m "feat: 完善任务面板文本渲染与终端捕获一致性"
+            """,
+            interactionOptions: [],
+            interactionPrompt: nil,
+            refreshedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let presentation = TaskSessionTextToolkit.taskPanelPresentation(from: snapshot)
+
+        XCTAssertEqual(presentation.taskLine, "提交并推送")
+        XCTAssertEqual(presentation.statusLine, "等待手工确认")
+        XCTAssertTrue(presentation.detailLine?.contains("git add -A") == true)
+        XCTAssertEqual(presentation.lifecycleLabel, "待确认")
+    }
+
+    func testTaskPillEventFingerprintUsesStableSnapshotContract() {
+        let snapshot = TaskSessionSnapshot(
+            sessionID: "session-3",
+            strategyID: "codex",
+            strategyDisplayName: "Codex",
+            lifecycle: .success,
+            renderTone: .success,
+            isRunning: false,
+            secondaryText: "提交并推送\n任务已完成",
+            detailText: nil,
+            interactionOptions: [],
+            interactionPrompt: nil,
+            refreshedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let fingerprint1 = TaskSessionTextToolkit.taskPillEventFingerprint(
+            sessionID: "backend|session-3",
+            snapshot: snapshot,
+            fallbackText: "提交并推送\n任务已完成",
+            tone: "success"
+        )
+        let fingerprint2 = TaskSessionTextToolkit.taskPillEventFingerprint(
+            sessionID: "backend|session-3",
+            snapshot: snapshot,
+            fallbackText: "提交并推送\n任务已完成\n额外日志 12345",
+            tone: "success"
+        )
+
+        XCTAssertEqual(fingerprint1, fingerprint2)
     }
 }

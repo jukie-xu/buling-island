@@ -89,6 +89,69 @@ final class TerminalCaptureServiceTests: XCTestCase {
         XCTAssertEqual(signal.summaryText, "您的任务需要手工确认。")
         XCTAssertEqual(signal.interactionHint, "您的任务需要手工确认。")
     }
+
+    @MainActor
+    func testSessionLifecycleTransitionsFromActiveToMissingThenEvicted() {
+        let backend = MockCaptureBackend(
+            supportedKinds: [.iTerm2],
+            result: .captured([
+                TerminalSessionRow(
+                    nativeSessionId: "42",
+                    terminalKind: .iTerm2,
+                    title: "codex",
+                    tty: "ttys001",
+                    tail: "› hi"
+                )
+            ])
+        )
+        let probe = MockHostProbe(kind: .iTerm2, running: true)
+        let service = TerminalCaptureService(backends: [backend], hostHealthProbes: [probe], signalParsers: [])
+
+        let mergedActive = TerminalCaptureService.mergeBackendFetches([backend], probes: [probe])
+        service.performTestConsume(merged: mergedActive)
+
+        XCTAssertEqual(service.sessionLifecycleByID["mock.backend|42"]?.phase, .active)
+
+        let missingBackend = MockCaptureBackend(
+            supportedKinds: [.iTerm2],
+            result: .captured([])
+        )
+        let mergedMissing = TerminalCaptureService.mergeBackendFetches([missingBackend], probes: [probe])
+        service.performTestConsume(merged: mergedMissing)
+        XCTAssertEqual(service.sessionLifecycleByID["mock.backend|42"]?.phase, .missing)
+
+        service.performTestConsume(merged: mergedMissing)
+        XCTAssertNil(service.sessionLifecycleByID["mock.backend|42"])
+    }
+
+    @MainActor
+    func testBusyStatusCanBeKeptFromLifecycleEvenWhenTailDigestDoesNotChange() {
+        let backend = MockCaptureBackend(
+            supportedKinds: [.iTerm2],
+            result: .captured([
+                TerminalSessionRow(
+                    nativeSessionId: "43",
+                    terminalKind: .iTerm2,
+                    title: "codex",
+                    tty: "ttys001",
+                    tail: """
+                    › hi
+                    • working (reading files)
+                    """
+                )
+            ])
+        )
+        let probe = MockHostProbe(kind: .iTerm2, running: true)
+        let service = TerminalCaptureService(backends: [backend], hostHealthProbes: [probe], signalParsers: [])
+
+        let merged = TerminalCaptureService.mergeBackendFetches([backend], probes: [probe])
+        service.performTestConsume(merged: merged)
+        XCTAssertEqual(service.latestStatusTone, "busy")
+
+        service.performTestConsume(merged: merged)
+        XCTAssertEqual(service.latestStatusTone, "busy")
+        XCTAssertEqual(service.latestStatusSourceSessionID, "mock.backend|43")
+    }
 }
 
 private final class MockCaptureBackend: TerminalSessionCaptureBackend, @unchecked Sendable {

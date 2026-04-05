@@ -215,6 +215,11 @@ enum TaskStrategyFileLoader {
         configurationsByStrategyID()[strategyID].map { ConfigurableTaskSessionStrategy(config: $0) }
     }
 
+    /// 包内 `Configs` 资源中的策略文件 URL（不受 `~/Library/.../TaskStrategies` 覆盖影响）；供测试断言内置 JSON 行为。
+    static func urlForBundledStrategyJSON(strategyID: String) -> URL? {
+        Bundle.module.url(forResource: strategyID, withExtension: "json")
+    }
+
     static func invalidateBundledStrategyCaches() {
         mergeLock.lock()
         mergedConfigurationsCache = nil

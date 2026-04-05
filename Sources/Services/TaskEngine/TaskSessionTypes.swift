@@ -159,4 +159,12 @@ struct TaskSessionSnapshot: Hashable {
 struct TaskSessionPanelMemory: Equatable {
     var cachedUserPrompt: String?
     var cachedAgentReply: String?
+    var hasActiveTask: Bool = false
+}
+
+struct TaskPanelPresentation: Equatable {
+    let taskLine: String
+    let statusLine: String
+    let detailLine: String?
+    let lifecycleLabel: String
 }

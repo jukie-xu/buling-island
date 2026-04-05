@@ -202,14 +202,130 @@ enum TaskSessionTextToolkit {
     /// 未识别到用户输入行（如 `›` / `❯`）时任务面板副文案。
     static let taskPanelNoTaskPlaceholder = "暂无任务"
 
-    /// 任务策略判定为成功后的第二行固定文案。
-    static let taskPanelCompletedLine = "任务执行完毕"
+    /// 任务策略判定为成功后的第二行固定文案（空闲态下若仍保留本轮任务标题，亦用此句表示已结束等待新指令）。
+    static let taskPanelCompletedLine = "任务已完成"
 
     /// 已识别提问但尚未解析到助手输出时的第二行占位。
     static let taskPanelRunningPlaceholder = "处理中…"
 
     static let taskPanelPromptMaxLength = 120
     static let taskPanelReplyMaxLength = 88
+
+    static func taskCompletedBottomHintText(strategyID: String?, strategyDisplayName: String?) -> String {
+        switch strategyID?.lowercased() {
+        case "codex":
+            return "Codex 任务执行完成"
+        case "claude":
+            return "Claude 任务执行完成"
+        default:
+            if let name = trimNonEmpty(strategyDisplayName) {
+                return "\(name) 任务执行完成"
+            }
+            return "终端任务执行完成"
+        }
+    }
+
+    static func taskPanelRowSummary(
+        secondaryText: String,
+        fallbackTitle: String
+    ) -> (title: String, detail: String?) {
+        let displayLines = taskPanelDisplayLines(from: secondaryText)
+        let title = displayLines.primary.isEmpty ? fallbackTitle : displayLines.primary
+        return (title, displayLines.secondary)
+    }
+
+    static func taskPanelDisplayLines(from text: String) -> (primary: String, secondary: String?) {
+        let parts = text
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if let primary = parts.first {
+            return (primary, parts.count > 1 ? parts[1] : nil)
+        }
+        return ("", nil)
+    }
+
+    static func taskPanelPresentation(from snapshot: TaskSessionSnapshot) -> TaskPanelPresentation {
+        let displayLines = taskPanelDisplayLines(from: snapshot.secondaryText)
+        let taskLine = trimNonEmpty(displayLines.primary) ?? taskPanelNoTaskPlaceholder
+        let secondaryLine = trimNonEmpty(displayLines.secondary)
+        let detailLine = trimNonEmpty(snapshot.detailText)
+
+        let statusLine: String = {
+            switch snapshot.lifecycle {
+            case .running:
+                return secondaryLine ?? taskPanelRunningPlaceholder
+            case .waitingInput:
+                return "等待手工确认"
+            case .success:
+                return taskPanelCompletedLine
+            case .error:
+                return secondaryLine ?? detailLine ?? "任务执行异常"
+            case .idle:
+                if secondaryLine == taskPanelCompletedLine {
+                    return taskPanelCompletedLine
+                }
+                return secondaryLine ?? "等待新任务"
+            case .inactiveTool:
+                return secondaryLine ?? "未识别到任务工具"
+            }
+        }()
+
+        let normalizedDetailLine: String? = {
+            guard snapshot.lifecycle == .waitingInput else { return nil }
+            return detailLine ?? secondaryLine ?? "请前往终端完成确认。"
+        }()
+
+        return TaskPanelPresentation(
+            taskLine: taskLine,
+            statusLine: statusLine,
+            detailLine: normalizedDetailLine,
+            lifecycleLabel: taskPanelLifecycleLabel(for: snapshot.lifecycle)
+        )
+    }
+
+    static func taskPanelLifecycleLabel(for lifecycle: TaskLifecycleState) -> String {
+        switch lifecycle {
+        case .inactiveTool:
+            return "未激活"
+        case .idle:
+            return "空闲"
+        case .running:
+            return "进行中"
+        case .waitingInput:
+            return "待确认"
+        case .success:
+            return "完成"
+        case .error:
+            return "异常"
+        }
+    }
+
+    static func taskPillEventFingerprint(
+        sessionID: String,
+        snapshot: TaskSessionSnapshot?,
+        fallbackText: String,
+        tone: String
+    ) -> String? {
+        guard tone == "success" || tone == "error" || tone == "warn" else { return nil }
+        if let snapshot {
+            let presentation = taskPanelPresentation(from: snapshot)
+            let lifecycle = snapshot.lifecycle.rawValue
+            let task = normalizePillFingerprintText(presentation.taskLine)
+            let output = normalizePillFingerprintText(presentation.statusLine)
+            return "\(sessionID)|\(lifecycle)|\(task)|\(output)"
+        }
+        let normalized = normalizePillFingerprintText(fallbackText)
+        return "\(sessionID)|\(tone)|\(normalized)"
+    }
+
+    static func normalizePillFingerprintText(_ text: String) -> String {
+        var normalized = text.lowercased()
+        normalized = normalized.replacingOccurrences(of: "[0-9a-f]{6,}", with: "#", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: "\\b\\d+\\b", with: "#", options: .regularExpression)
+        return normalized
+    }
 
     static func composeWaitingInputDisplayText(
         interactionPrompt: TaskInteractionPrompt?,
@@ -253,7 +369,8 @@ enum TaskSessionTextToolkit {
         replyNow: String?,
         memory: TaskSessionPanelMemory
     ) -> String {
-        let prompt = trimNonEmpty(promptNow) ?? trimNonEmpty(memory.cachedUserPrompt)
+        // 优先使用执行阶段写入的缓存标题，避免空闲态底部新的 `›` 跟进指令覆盖本轮主任务（如 Codex 多轮同会话）。
+        let prompt = trimNonEmpty(memory.cachedUserPrompt) ?? trimNonEmpty(promptNow)
 
         guard let prompt else {
             if lifecycle == .error {
@@ -274,6 +391,9 @@ enum TaskSessionTextToolkit {
             let err = truncate(lastErrorText(from: tail), max: taskPanelReplyMaxLength)
             return "\(truncate(prompt, max: taskPanelPromptMaxLength))\n\(err)"
         case .idle, .inactiveTool:
+            if memory.hasActiveTask {
+                return "\(truncate(prompt, max: taskPanelPromptMaxLength))\n\(taskPanelCompletedLine)"
+            }
             if let reply {
                 return "\(truncate(prompt, max: taskPanelPromptMaxLength))\n\(truncate(reply, max: taskPanelReplyMaxLength))"
             }
@@ -289,18 +409,27 @@ enum TaskSessionTextToolkit {
         memory: inout TaskSessionPanelMemory
     ) {
         if let p = trimNonEmpty(promptNow) {
-            if memory.cachedUserPrompt != p {
+            if memory.cachedUserPrompt != p, stabilizedLifecycle == .running || stabilizedLifecycle == .waitingInput {
                 memory.cachedAgentReply = nil
+            }
+            if memory.cachedUserPrompt != p, stabilizedLifecycle == .idle || stabilizedLifecycle == .inactiveTool {
+                memory.cachedAgentReply = nil
+                memory.hasActiveTask = false
             }
             memory.cachedUserPrompt = p
         }
 
         switch stabilizedLifecycle {
         case .running, .waitingInput:
+            memory.hasActiveTask = true
             if let r = sanitizedPanelReply(replyNow) {
                 memory.cachedAgentReply = r
             }
-        case .success, .error, .idle, .inactiveTool:
+        case .success, .error:
+            memory.hasActiveTask = true
+        case .idle, .inactiveTool:
+            // 已有 transcript cache 保证 `promptNow` 是最近一次真实提交的 prompt；
+            // 结束态不再写入回复缓存，避免把后续空闲 UI 文案误当成任务结果。
             break
         }
     }
@@ -355,9 +484,6 @@ enum TaskSessionTextToolkit {
         guard index >= 0 && index < lines.count else { return false }
 
         let nextNonEmpty = lines[(index + 1)...].first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let previousNonEmpty = index > 0
-            ? lines[..<index].reversed().first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            : nil
 
         guard let nextNonEmpty else { return false }
         let nextLower = nextNonEmpty.lowercased()
@@ -366,14 +492,17 @@ enum TaskSessionTextToolkit {
 
         guard hasCodexFooterAfterPrompt else { return false }
 
-        guard let previousNonEmpty else { return false }
-        let previousLower = previousNonEmpty.lowercased()
-        let hasRunningLineBeforePrompt = previousLower.contains("working (")
-            || previousLower.contains("• working")
-            || previousLower.contains("running (")
-            || previousLower.contains("处理中")
+        let previousRelevantLines = index > 0 ? Array(lines[..<index]) : []
+        let hasSubstantiveOutputBeforePrompt = previousRelevantLines.contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return false }
+            if isUserInputCommandLine(trimmed) { return false }
+            if isAuxiliaryTaskChromeLine(trimmed) { return false }
+            if isNoiseLine(trimmed) || isInputAreaLine(trimmed) { return false }
+            return true
+        }
 
-        return hasRunningLineBeforePrompt
+        return hasSubstantiveOutputBeforePrompt
     }
 
     static func interactionOptions(from tail: String) -> [TaskInteractionOption] {

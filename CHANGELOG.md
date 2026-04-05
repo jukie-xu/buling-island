@@ -34,13 +34,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - 启动注入：`installProjectStrategies()` 前使 `TaskStrategyFileLoader` 合并缓存失效，便于本机 `~/Library/Application Support/…/TaskStrategies` 覆盖内置 JSON 后立即生效。
 - iTerm / iTerm2 会话捕获：AppleScript 与 Terminal.app 对齐，**优先** `history`（滚动缓冲），为空再回退 `contents` / `text`，减轻非前台标签上尾部文本陈旧或截断的问题。
 - 任务引擎：不再根据终端「近期有输出变化」(`activeSessionIDs`) 把 `idle` 强行标为 `running`；是否与 Codex 的 `• working` 等策略一致、仅由各 `TaskSessionStrategy` 判定，避免未提交输入也出现「处理中」与绿灯。
-- 任务面板：`TaskSessionSnapshot.secondaryText` 由引擎统一编排：未识别到 `›`/`❯` 等用户输入行时仅显示「暂无任务」；执行中/等待输入为「提问 + 最新助手摘要（或「处理中…」）」并跨轮询缓存；成功时第二行固定「任务执行完毕」。`inactiveTool` 仍为策略原文案。
+- 任务面板：`TaskSessionSnapshot.secondaryText` 由引擎统一编排：未识别到 `›`/`❯` 等用户输入行时仅显示「暂无任务」；执行中/等待输入为「提问 + 最新助手摘要（或「处理中…」）」并跨轮询缓存；成功时第二行固定「任务已完成」。`inactiveTool` 仍为策略原文案。
 - 任务面板：未检测到已接入的终端宿主时，在面板正中显示浅灰提示「未检测到活动中的终端」。
 - 任务面板：宿主已连通但当前没有可展示的会话时同样显示上述灰色占位，避免出现纯黑空白区域。
 - 外部终端捕获（设置开启时）：应用启动后即开始轮询，不再依赖「先切到任务面板才启动监控」。
 - 应用面板：应用目录扫描结果变化时递增 `appCatalogRevision` 并用于面板视图标识，首扫完成后更易触发界面刷新。
 - 启动时：若未授予辅助权限则触发系统提示；在「启用外部终端捕获」时延迟发起一轮 Apple Event 探测以促发自动化授权；面板出现后即刻检测 Claude CLI。
 - Claude CLI：检测路径补充 `~/.local/bin`、`~/bin`，仍支持环境变量 `CLAUDE_CLI_PATH`。
+
+## [1.0.2] - 2026-04-05
+
+### Fixed
+
+- 任务策略：`codex.json` / `claude.json` / `generic.json` 的 `error` 判定去掉在「紧凑尾部」里做子串匹配的泛词（如裸 `failed` / `exception`、中文「失败」「错误」「报错」），避免产品说明里的「错误摘要」「同步失败」「no exception」等正常描述误判为 `异常`；改为更具体的短语、`"error":{` 型 JSON、工具链常见失败句式等 `tailRegex`。
+- 测试：`TaskStrategyFileLoader.urlForBundledStrategyJSON` 供用例直接读取包内策略，避免本机 `~/Library/Application Support/BulingIsland/TaskStrategies/*.json` **整文件覆盖**内置合并结果导致测试与仓库行为不一致。
+
+## [1.0.1] - 2026-04-04
+
+### Fixed
+
+- Codex / 任务面板：空闲态仅因底部出现 `› …` 或文案里含 “summarize recent commits” 就被判为 `running`、输入区仍显示 working；已收紧 `codex.json` 的 `running` 规则，需有真实执行信号（如 `• working`）等才为执行中。
+- 任务面板：空闲/成功/错误时不再用最新 `›` 行覆盖本轮任务标题；副标题在空闲态若仍保留本轮标题缓存则固定为「任务已完成」，避免把后续跟进提问与最后一段助手输出误当作主任务摘要。
+
+### Changed
+
+- 任务面板：策略命中 `success` 时的固定副标题由「任务执行完毕」改为「任务已完成」，与空闲态（保留本轮标题缓存时）的完成提示一致。
 
 ## [1.0.0] - 2026-04-02
 

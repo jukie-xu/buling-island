@@ -19,23 +19,30 @@
       "titleContains": [],
       "titleRegex": [],
       "tailContains": [
-        "error",
-        "failed",
-        "exception",
         "auth_error",
         "unauthorized",
         "401",
         "timeout",
         "timed out",
-        "报错",
-        "失败",
-        "错误",
         "超时",
         "anthropicerror",
         "invalid api key",
         "credit balance"
       ],
-      "tailRegex": []
+      "tailRegex": [
+        "(?im)^\\s*error:\\s+",
+        "(?i)\"error\"\\s*:\\s*\\{",
+        "(?i)\\btraceback\\b",
+        "(?i)\\buncaught\\s+exception\\b",
+        "(?i)\\bexception:\\s+",
+        "(?i)(?:command|operation|request|build|test)\\s+[^\\n]{0,160}\\bfailed\\b",
+        "(?i)\\bfailed\\s+to\\s+(?:connect|resolve|open|read|write|access|authenticate|parse)\\b",
+        "(?i)\\bfailed\\s+with\\s+(?:status|code|error)\\b",
+        "(?i)(?:推送|拉取|克隆|上传|下载|连接|编译|构建|安装|操作)(?:已|均)?失败",
+        "(?i)(?:命令|脚本|任务|请求|进程)(?:执行|运行)?(?:已|均)?失败",
+        "(?i)(?:系统|程序)?(?:报错|出错)[：:.．]",
+        "(?i)发生(?:了)?(?:严重)?错误[：:.．]"
+      ]
     },
     "waitingInput": {
       "titleContains": [],
