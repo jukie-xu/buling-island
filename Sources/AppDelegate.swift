@@ -76,7 +76,7 @@ final class IslandViewModel: ObservableObject {
     }
 
     init() {
-        expandedPanelMode = SettingsManager.shared.defaultExpandedPanel
+        expandedPanelMode = SettingsManager.shared.preferredDefaultExpandedPanel()
         startWatchingApplicationsFolders()
         loadApps()
     }
@@ -106,7 +106,7 @@ final class IslandViewModel: ObservableObject {
 
     /// 任务面板中点击异常外部会话：展开（若已收缩）并切到任务面板。
     func expandToTaskPanel() {
-        expandedPanelMode = .tasks
+        expandedPanelMode = settings.normalizedExpandedPanelMode(.tasks)
         if state == .collapsed {
             PanelManager.shared.setExpanded()
             if allApps.isEmpty && !isLoadingApps {
@@ -170,7 +170,9 @@ final class IslandViewModel: ObservableObject {
             // 避免展开时被默认面板替换导致 SwiftUI 卸载 Claude 终端、进程与缓冲丢失。
             if collapsedPillTone == "error" || collapsedPillTone == "warn",
                let route = pillAbnormalExpandTarget {
-                expandedPanelMode = route
+                expandedPanelMode = settings.normalizedExpandedPanelMode(route)
+            } else {
+                expandedPanelMode = settings.normalizedExpandedPanelMode(expandedPanelMode)
             }
             PanelManager.shared.setExpanded()
             // 展开时兜底刷新一次，避免冷启动/重启后首次展开看到空内容。

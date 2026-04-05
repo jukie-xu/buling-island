@@ -155,6 +155,26 @@ final class TaskStrategyFileConfigTests: XCTestCase {
         XCTAssertEqual(result.lifecycle, .error)
     }
 
+    func testBundledCodexClassifiesReconnectAsRunning() {
+        let strategies = TaskStrategyFileLoader.loadConfiguredStrategies()
+        guard let codex = strategies.first(where: { $0.strategyID == "codex" }) else {
+            XCTFail("missing bundled codex strategy")
+            return
+        }
+
+        let session = CapturedTerminalSession(
+            nativeSessionId: "codex-reconnecting",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "codex",
+            tty: "ttys005",
+            tailOutput: "• Reconnecting... 2/5 (12s • esc to interrupt)"
+        )
+
+        let result = codex.analyze(session: session)
+        XCTAssertEqual(result.lifecycle, .running)
+    }
+
     func testBundledCodexDoesNotTreatProductSpecMentioningErrorSummaryAsFailure() throws {
         // 必须用包内 JSON：`~/Library/.../TaskStrategies/codex.json` 会整文件覆盖合并结果，与仓库内置不一致时易误判。
         let url = try XCTUnwrap(TaskStrategyFileLoader.urlForBundledStrategyJSON(strategyID: "codex"))

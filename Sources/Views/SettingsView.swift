@@ -886,6 +886,8 @@ private struct SettingsDashboardTab: View {
                     )
                 )
                 dashboardRowDivider
+                dashboardExpandedPanelsRow
+                dashboardRowDivider
                 dashboardDefaultExpandedPanelRow
             }
             .padding(.horizontal, 14)
@@ -903,20 +905,41 @@ private struct SettingsDashboardTab: View {
         .cardStyle(colorScheme: colorScheme)
     }
 
+    private var dashboardExpandedPanelsRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("展开显示面板")
+                    .font(.system(size: 13, weight: .medium))
+                Text("勾选后会出现在展开态顶部标签中，至少保留一个。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            HStack(spacing: 8) {
+                ForEach(ExpandedPanelMode.allCases) { mode in
+                    dashboardExpandedPanelToggleChip(mode)
+                }
+            }
+            .frame(alignment: .trailing)
+        }
+        .padding(.vertical, 10)
+    }
+
     private var dashboardDefaultExpandedPanelRow: some View {
         let trailingControlWidth: CGFloat = 220
         return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("默认展开面板")
                     .font(.system(size: 13, weight: .medium))
-                Text("从收缩态点击展开时，优先进入的面板。")
+                Text("从收缩态点击展开时，优先进入的面板；仅可选已勾选面板。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             Picker("默认展开面板", selection: $settings.defaultExpandedPanel) {
-                ForEach(ExpandedPanelMode.allCases) { mode in
+                ForEach(settings.orderedEnabledExpandedPanels) { mode in
                     Text(expandedPanelSegmentLabel(mode)).tag(mode)
                 }
             }
@@ -924,8 +947,41 @@ private struct SettingsDashboardTab: View {
             .labelsHidden()
             .frame(width: trailingControlWidth, alignment: .trailing)
             .accessibilityHint("在应用、Claude 与任务三种展开面板间选择默认项")
+            .disabled(settings.orderedEnabledExpandedPanels.count <= 1)
         }
         .padding(.vertical, 10)
+    }
+
+    private func dashboardExpandedPanelToggleChip(_ mode: ExpandedPanelMode) -> some View {
+        let enabled = settings.isExpandedPanelEnabled(mode)
+        let isOnlyEnabled = settings.enabledExpandedPanels.count == 1 && enabled
+        return Button {
+            var next = settings.enabledExpandedPanels
+            if enabled {
+                guard !isOnlyEnabled else { return }
+                next.remove(mode)
+            } else {
+                next.insert(mode)
+            }
+            settings.enabledExpandedPanels = next
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(expandedPanelSegmentLabel(mode))
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(enabled ? Color.white : Color.primary.opacity(0.78))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(enabled ? Color.accentColor.opacity(colorScheme == .dark ? 0.9 : 0.82) : Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06))
+            )
+        }
+        .buttonStyle(.plain)
+        .opacity(isOnlyEnabled ? 0.92 : 1)
+        .accessibilityHint(isOnlyEnabled ? "至少保留一个面板，当前无法取消" : "切换该面板是否显示在展开态标签中")
     }
 
     private var permissionsCard: some View {

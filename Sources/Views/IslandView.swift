@@ -206,6 +206,12 @@ struct IslandView: View {
                 viewModel.expandedPanelMode = newDefault
             }
         }
+        .onChange(of: settings.enabledExpandedPanels) { _ in
+            let normalized = settings.normalizedExpandedPanelMode(viewModel.expandedPanelMode)
+            if normalized != viewModel.expandedPanelMode {
+                viewModel.expandedPanelMode = normalized
+            }
+        }
         .onChange(of: viewModel.expandedPanelMode) { mode in
             // 终端轮询是否在跑仅由设置项决定；切换标签仍同步间隔/状态并刷新任务快照。
             syncTerminalCaptureConfig()
@@ -672,9 +678,9 @@ struct IslandView: View {
             // Top bar — flush with screen top, no rounded corners
             HStack(spacing: 0) {
                 HStack(spacing: 6) {
-                    appStoreModeButton(mode: .appStore)
-                    claudeModeButton(mode: .claude)
-                    taskModeButton(mode: .tasks)
+                    ForEach(settings.orderedEnabledExpandedPanels) { mode in
+                        expandedPanelModeButton(mode)
+                    }
                 }
                 .padding(.leading, 10)
 
@@ -762,22 +768,6 @@ struct IslandView: View {
         }
     }
 
-    private func appStoreModeButton(mode: ExpandedPanelMode) -> some View {
-        let selected = viewModel.expandedPanelMode == mode
-        return Button {
-            viewModel.expandedPanelMode = mode
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                AppPanelIconMark(size: 14, active: true)
-            }
-            .frame(width: 24, height: 24)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("应用面板")
-    }
-
     private func claudeCodeLogoMark(size: CGFloat = 16) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -789,7 +779,7 @@ struct IslandView: View {
         .frame(width: size, height: size)
     }
 
-    private func claudeModeButton(mode: ExpandedPanelMode) -> some View {
+    private func expandedPanelModeButton(_ mode: ExpandedPanelMode) -> some View {
         let selected = viewModel.expandedPanelMode == mode
         return Button {
             viewModel.expandedPanelMode = mode
@@ -797,28 +787,19 @@ struct IslandView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                ClaudePanelIconMark(size: 14, active: true)
+                switch mode {
+                case .appStore:
+                    AppPanelIconMark(size: 14, active: true)
+                case .claude:
+                    ClaudePanelIconMark(size: 14, active: true)
+                case .tasks:
+                    TaskPanelIconMark(size: 14, active: true)
+                }
             }
             .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Claude 面板")
-    }
-
-    private func taskModeButton(mode: ExpandedPanelMode) -> some View {
-        let selected = viewModel.expandedPanelMode == mode
-        return Button {
-            viewModel.expandedPanelMode = mode
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(selected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-                TaskPanelIconMark(size: 14, active: true)
-            }
-            .frame(width: 24, height: 24)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Task 面板")
+        .accessibilityLabel(mode.displayName)
     }
 
     private var claudePanelView: some View {

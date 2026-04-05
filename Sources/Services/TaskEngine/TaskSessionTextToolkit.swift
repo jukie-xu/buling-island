@@ -369,6 +369,10 @@ enum TaskSessionTextToolkit {
         replyNow: String?,
         memory: TaskSessionPanelMemory
     ) -> String {
+        if lifecycle != .success, let reconnectText = reconnectDisplayText(from: tail) {
+            return reconnectText
+        }
+
         // 优先使用执行阶段写入的缓存标题，避免空闲态底部新的 `›` 跟进指令覆盖本轮主任务（如 Codex 多轮同会话）。
         let prompt = trimNonEmpty(memory.cachedUserPrompt) ?? trimNonEmpty(promptNow)
 
@@ -454,6 +458,51 @@ enum TaskSessionTextToolkit {
         guard let t = trimNonEmpty(string) else { return nil }
         if isTerminalScrollbackArtifactLine(t) { return nil }
         return t
+    }
+
+    private static func reconnectDisplayText(from tail: String) -> String? {
+        let lines = standardizedTerminalText(from: tail)
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for index in lines.indices.reversed() {
+            let rawLine = lines[index]
+            guard isReconnectStatusLine(rawLine) else { continue }
+
+            let primary = normalizeReplyLine(rawLine)
+            guard !primary.isEmpty else { continue }
+
+            let detail: String? = {
+                guard index + 1 < lines.count else { return nil }
+                for candidate in lines[(index + 1)...] {
+                    if isUserInputCommandLine(candidate) || isAuxiliaryTaskChromeLine(candidate) {
+                        break
+                    }
+                    if let reconnectDetail = reconnectDetailText(from: candidate) {
+                        return reconnectDetail
+                    }
+                }
+                return nil
+            }()
+
+            if let detail {
+                return "\(truncate(primary, max: taskPanelPromptMaxLength))\n\(truncate(detail, max: taskPanelReplyMaxLength))"
+            }
+            return truncate(primary, max: taskPanelPromptMaxLength)
+        }
+
+        return nil
+    }
+
+    private static func reconnectDetailText(from line: String) -> String? {
+        let normalized = normalizeReplyLine(line)
+        guard !normalized.isEmpty else { return nil }
+        let lower = normalized.lowercased()
+        if lower.contains("timeout waiting for child process to exit") {
+            return normalized
+        }
+        return nil
     }
 
     /// 不参与「助手最新回复」摘要的营销横幅、状态脚注等（不影响用于生命周期判断的 compact）。
@@ -611,6 +660,7 @@ enum TaskSessionTextToolkit {
     }
 
     static func isNoiseLine(_ line: String) -> Bool {
+        if isReconnectStatusLine(line) || reconnectDetailText(from: line) != nil { return false }
         let lower = line.lowercased()
         if isStructuredCodeExcerptLine(line) {
             return true
@@ -651,6 +701,9 @@ enum TaskSessionTextToolkit {
     }
 
     static func isInputAreaLine(_ line: String) -> Bool {
+        if isReconnectStatusLine(line) || reconnectDetailText(from: line) != nil {
+            return false
+        }
         let lower = line.lowercased()
         let inputMarkers = [
             "send message",
@@ -694,7 +747,13 @@ enum TaskSessionTextToolkit {
     private static func normalizeReplyLine(_ line: String) -> String {
         line
             .replacingOccurrences(of: #"^\s*⎿\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^\s*[└├│┃]+\s*"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isReconnectStatusLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        return matchesRegex(#"(?i)^(?:•\s*)?reconnecting\b"#, in: trimmed)
     }
 
     private static func isStructuredCodeExcerptLine(_ line: String) -> Bool {

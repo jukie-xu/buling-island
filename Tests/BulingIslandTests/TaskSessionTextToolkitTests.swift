@@ -261,6 +261,21 @@ final class TaskSessionTextToolkitTests: XCTestCase {
         XCTAssertEqual(prompt, "提交并推送")
     }
 
+    func testExtractLatestReplyKeepsCodexReconnectTimeoutCopy() {
+        let tail = """
+        • Reconnecting... 5/5 (1m 36s • esc to interrupt)
+          └ Timeout waiting for child process to exit
+
+        › Explain this codebase
+
+        gpt-5.4 medium · 100% left · ~
+        """
+
+        let reply = TaskSessionTextToolkit.extractLatestReply(from: tail)
+
+        XCTAssertEqual(reply, "Timeout waiting for child process to exit")
+    }
+
     func testTaskPanelPresentationUsesFixedTaskAndStatusCopyForSuccess() {
         let snapshot = TaskSessionSnapshot(
             sessionID: "session-1",

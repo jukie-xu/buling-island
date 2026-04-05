@@ -111,6 +111,7 @@
       "titleRegex": [],
       "tailContains": [
         "• working",
+        "reconnecting",
         "esc to interrupt",
         "exec_command",
         "apply_patch",
@@ -125,6 +126,7 @@
       ],
       "tailRegex": [
         "(?i)•\\s+working\\b",
+        "(?i)(?:•\\s*)?reconnecting\\b",
         "(?im)^\\s*gpt-[0-9.]+-codex\\s+.*left\\s+·"
       ]
     },

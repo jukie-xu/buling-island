@@ -124,6 +124,39 @@ final class TaskSessionPanelTextTests: XCTestCase {
         XCTAssertTrue(text.contains(TaskSessionTextToolkit.taskPanelCompletedLine))
     }
 
+    func testReconnectStatusOverridesPromptCopy() {
+        let memory = TaskSessionPanelMemory(cachedUserPrompt: "设置-控制台-默认展开面板", cachedAgentReply: nil, hasActiveTask: true)
+        let tail = """
+        >_ OpenAI Codex (v0.118.0)
+        model:     gpt-5.4 medium   /model to change
+        directory: ~
+
+        › 设置-控制台-默认展开面板，现在只有三个可选项。
+
+        • Reconnecting... 5/5 (1m 36s • esc to interrupt)
+          └ Timeout waiting for child process to exit
+
+        › Explain this codebase
+
+        gpt-5.4 medium · 100% left · ~
+        """
+
+        let prompt = TaskSessionTextToolkit.extractLatestUserPrompt(from: tail)
+        let reply = TaskSessionTextToolkit.extractLatestReply(from: tail)
+        let text = TaskSessionTextToolkit.composeTaskPanelSecondaryText(
+            tail: tail,
+            lifecycle: .error,
+            promptNow: prompt,
+            replyNow: reply,
+            memory: memory
+        )
+
+        XCTAssertEqual(
+            text,
+            "• Reconnecting... 5/5 (1m 36s • esc to interrupt)\nTimeout waiting for child process to exit"
+        )
+    }
+
     func testNewPromptClearsCachedReply() {
         var memory = TaskSessionPanelMemory(cachedUserPrompt: "First", cachedAgentReply: "Old reply")
         TaskSessionTextToolkit.updateTaskPanelMemory(

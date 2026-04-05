@@ -23,6 +23,7 @@ enum SettingsSchema {
         static let claudeEnableITerm2Capture = "claudeEnableITerm2Capture"
         static let claudeITerm2PollInterval = "claudeITerm2PollInterval"
         static let taskPanelFontSize = "taskPanelFontSize"
+        static let enabledExpandedPanels = "enabledExpandedPanels"
         static let defaultExpandedPanel = "defaultExpandedPanel"
     }
 
@@ -43,6 +44,7 @@ enum SettingsSchema {
         static let claudeEnableITerm2Capture = false
         static let claudeITerm2PollInterval = 1.5
         static let taskPanelFontSize = 12.0
+        static let enabledExpandedPanels: Set<ExpandedPanelMode> = [.appStore, .claude, .tasks]
         static let defaultExpandedPanel: ExpandedPanelMode = .appStore
     }
 }

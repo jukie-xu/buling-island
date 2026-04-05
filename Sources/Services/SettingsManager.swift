@@ -118,9 +118,31 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(taskPanelFontSize, forKey: SettingsSchema.Key.taskPanelFontSize) }
     }
 
+    /// 展开态允许显示的面板集合；至少保留一个。
+    @Published var enabledExpandedPanels: Set<ExpandedPanelMode> {
+        didSet {
+            let sanitized = Self.sanitizedEnabledExpandedPanels(enabledExpandedPanels)
+            if sanitized != enabledExpandedPanels {
+                enabledExpandedPanels = sanitized
+                return
+            }
+            UserDefaults.standard.set(Self.encodeExpandedPanels(enabledExpandedPanels), forKey: SettingsSchema.Key.enabledExpandedPanels)
+            if !enabledExpandedPanels.contains(defaultExpandedPanel) {
+                defaultExpandedPanel = preferredDefaultExpandedPanel()
+            }
+        }
+    }
+
     /// 从收缩态点击药丸展开时默认进入的面板（无「异常」路由时）。
     @Published var defaultExpandedPanel: ExpandedPanelMode {
-        didSet { UserDefaults.standard.set(defaultExpandedPanel.rawValue, forKey: SettingsSchema.Key.defaultExpandedPanel) }
+        didSet {
+            let sanitized = normalizedExpandedPanelMode(defaultExpandedPanel)
+            if sanitized != defaultExpandedPanel {
+                defaultExpandedPanel = sanitized
+                return
+            }
+            UserDefaults.standard.set(defaultExpandedPanel.rawValue, forKey: SettingsSchema.Key.defaultExpandedPanel)
+        }
     }
 
     private init() {
@@ -174,8 +196,15 @@ final class SettingsManager: ObservableObject {
         self.claudeITerm2PollInterval = max(1, min(5, pollInterval ?? SettingsSchema.Default.claudeITerm2PollInterval))
         let taskFontSize = UserDefaults.standard.object(forKey: SettingsSchema.Key.taskPanelFontSize) as? Double
         self.taskPanelFontSize = max(10, min(16, taskFontSize ?? SettingsSchema.Default.taskPanelFontSize))
+        let enabledExpandedPanels = Self.decodeExpandedPanels(
+            UserDefaults.standard.stringArray(forKey: SettingsSchema.Key.enabledExpandedPanels)
+        )
+        self.enabledExpandedPanels = enabledExpandedPanels
         let defaultPanelRaw = UserDefaults.standard.string(forKey: SettingsSchema.Key.defaultExpandedPanel) ?? ""
-        self.defaultExpandedPanel = ExpandedPanelMode(rawValue: defaultPanelRaw) ?? SettingsSchema.Default.defaultExpandedPanel
+        let requestedDefaultPanel = ExpandedPanelMode(rawValue: defaultPanelRaw) ?? SettingsSchema.Default.defaultExpandedPanel
+        self.defaultExpandedPanel = enabledExpandedPanels.contains(requestedDefaultPanel)
+            ? requestedDefaultPanel
+            : Self.preferredExpandedPanel(from: enabledExpandedPanels)
     }
 
     private func savePillColor() {
@@ -194,5 +223,50 @@ final class SettingsManager: ObservableObject {
             return .white
         }
         return Color(nsColor)
+    }
+
+    var orderedEnabledExpandedPanels: [ExpandedPanelMode] {
+        ExpandedPanelMode.allCases.filter { enabledExpandedPanels.contains($0) }
+    }
+
+    func isExpandedPanelEnabled(_ mode: ExpandedPanelMode) -> Bool {
+        enabledExpandedPanels.contains(mode)
+    }
+
+    func normalizedExpandedPanelMode(_ mode: ExpandedPanelMode) -> ExpandedPanelMode {
+        guard enabledExpandedPanels.contains(mode) else {
+            return preferredDefaultExpandedPanel()
+        }
+        return mode
+    }
+
+    func preferredDefaultExpandedPanel() -> ExpandedPanelMode {
+        Self.preferredExpandedPanel(from: enabledExpandedPanels)
+    }
+
+    private static func decodeExpandedPanels(_ rawValues: [String]?) -> Set<ExpandedPanelMode> {
+        let decoded = Set((rawValues ?? []).compactMap(ExpandedPanelMode.init(rawValue:)))
+        return sanitizedEnabledExpandedPanels(decoded.isEmpty ? SettingsSchema.Default.enabledExpandedPanels : decoded)
+    }
+
+    private static func encodeExpandedPanels(_ modes: Set<ExpandedPanelMode>) -> [String] {
+        ExpandedPanelMode.allCases
+            .filter { modes.contains($0) }
+            .map(\.rawValue)
+    }
+
+    private static func sanitizedEnabledExpandedPanels(_ modes: Set<ExpandedPanelMode>) -> Set<ExpandedPanelMode> {
+        let filtered = Set(ExpandedPanelMode.allCases.filter { modes.contains($0) })
+        if filtered.isEmpty {
+            return [SettingsSchema.Default.defaultExpandedPanel]
+        }
+        return filtered
+    }
+
+    private static func preferredExpandedPanel(from modes: Set<ExpandedPanelMode>) -> ExpandedPanelMode {
+        for mode in ExpandedPanelMode.allCases where modes.contains(mode) {
+            return mode
+        }
+        return SettingsSchema.Default.defaultExpandedPanel
     }
 }
