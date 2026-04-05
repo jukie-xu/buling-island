@@ -8,17 +8,18 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
 </p>
 
-Buling Island 将 MacBook 的刘海区域变成一个控制中心：默认是快捷应用启动器，也可切换到 **Claude 面板**，在刘海下方内嵌终端会话、管理 Claude Code CLI 与（实验性）iTerm2 会话状态。点击刘海即可展开主面板，支持搜索、文件夹管理、自定义排列与多种展示模式。
+Buling Island 将 MacBook 的刘海区域变成一个控制中心：默认是快捷应用启动器，也可切换到 **Claude 面板**（内嵌终端与 Claude Code CLI）或 **任务面板**（外部终端会话状态汇总，实验性捕获）。点击刘海即可展开主面板，支持搜索、文件夹管理、自定义排列、多种展示模式，以及设置中可选的展开分段组合。
 
-Buling Island turns your MacBook's notch area into a control surface: a quick app launcher by default, plus optional **Claude panel** with an embedded terminal, Claude Code CLI workflows, and experimental iTerm2 session integration. Click the notch to expand the panel with search, folders, custom layout, and display modes.
+Buling Island turns your MacBook's notch area into a control surface: a quick app launcher by default, plus **Claude panel** (embedded terminal, Claude Code CLI) and **Task panel** (aggregated external-terminal session state with experimental capture). Click the notch to expand the panel with search, folders, custom layout, display modes, and configurable expanded segments in Settings.
 
 ## Download / 下载
 
-- **DMG（v1.0.0）**: [点击下载](https://github.com/jukie-xu/buling-island/raw/main/BulingIsland_v1.0.0.dmg)
+- **DMG（v1.0.2）**: [点击下载](https://github.com/jukie-xu/buling-island/raw/main/BulingIsland_v1.0.2.dmg)（若仓库根目录暂无该文件，可先本地执行 `./build-dmg.sh`，产物见 `dist/`）
 
 ## Features / 功能
 
-- **双模式面板 / Dual Modes** — 展开后可在 **应用** 与 **Claude** 面板间切换（顶部模式按钮）
+- **三模式面板 / Triple Modes** — 展开后可在 **应用**、**Claude** 与 **任务** 面板间切换（顶部分段）；任务面板汇总已接入外部终端中的会话状态（策略由内置 `TaskStrategies/*.json` 驱动，支持本机 Application Support 覆盖）
+- **展开分段可选 / Toggle expanded segments** — 设置中可启用或隐藏各展开面板分段，至少保留一个；默认进入的面板与异常展开路由会自动归一到当前已启用集合
 - **刘海触发 / Notch Activation** — 点击刘海区域展开面板
 - **应用搜索 / App Search** — 支持拼音首字母和模糊搜索
 - **智能合并 / Smart Merge** — Launchpad 一键按用途、开发者、首字母等规则整理进文件夹，系统自带应用归入「系统实用工具」「macOS 自带应用」等分组
@@ -30,7 +31,7 @@ Buling Island turns your MacBook's notch area into a control surface: a quick ap
 - **收缩态信息位 / Collapsed Pill Widgets** — 左右槽位可选电量、实时网速等（设置中配置）
 - **全屏时隐藏灵动岛 / Fullscreen Hide** — 可在全屏且为浏览器、播放器等场景时自动隐藏收缩态灵动岛（可开关）
 - **Claude Code / 内嵌终端** — 选择工作区后启动本机 `claude` CLI（SwiftTerm 渲染），状态可反映在灵动岛底部提醒区
-- **外部终端捕获（实验） / External Terminal Capture (Experimental)** — 可选轮询 **iTerm2**、经典 **iTerm**、系统 **终端 (Terminal.app)** 等已接入后端的会话缓冲，用于提醒与会话条（需在设置中开启并为「系统事件」与各终端勾选自动化）
+- **外部终端捕获（实验） / External Terminal Capture (Experimental)** — 可选轮询 **iTerm2**、经典 **iTerm**、系统 **终端 (Terminal.app)** 等已接入后端的会话缓冲，用于任务面板、提醒与会话条（开启后应用启动即轮询，需在设置中授权「系统事件」与各终端自动化）
 - **开机自启 / Launch at Login** — 支持 macOS 原生自启动
 - **本地化名称 / Localized Names** — 应用名称自动跟随系统语言
 
@@ -98,8 +99,9 @@ open /Applications/BulingIsland.app
 2. 点击刘海区域展开面板
 3. 在应用模式下：长按应用图标进入编辑模式；编辑模式下拖拽排序或合并为文件夹
 4. 使用 Launchpad 工具栏中的整理能力（含「一键智能合并」）可快速分组
-5. 切换到 Claude 模式：选择工作区、按需启动会话；可在设置中配置提醒与 iTerm2 实验选项
-6. 右键菜单栏托盘图标或在设置侧边栏底部退出应用
+5. 切换到 Claude 模式：选择工作区、按需启动会话；可在设置中配置提醒、外部终端捕获与展开后面板显隐
+6. 切换到任务模式：在已检测到终端宿主时查看各会话卡片；策略由 JSON 配置，含 Codex 执行中、等待输入、完成与重连等展示
+7. 右键菜单栏托盘图标或在设置侧边栏底部退出应用
 
 首次运行可能需要在 **系统设置 → 隐私与安全性 → 辅助功能**（及相关自动化/屏幕录制权限，视功能而定）中为 Buling Island 授权。
 
@@ -113,6 +115,7 @@ open /Applications/BulingIsland.app
 ├── install-local.sh                # 本地杀进程、安装、启动
 ├── AppIcon.icns                    # 应用图标
 └── Sources/
+    ├── Configs/TaskStrategies/     # 任务会话策略 JSON（Claude / Codex / Generic 等）
     ├── AppDelegate.swift           # 应用入口 & ViewModel
     ├── BulingIslandApp.swift      # SwiftUI App
     ├── NotchDetector.swift         # 刘海区域检测
@@ -152,9 +155,9 @@ open /Applications/BulingIsland.app
 - **UI Layer (SwiftUI + AppKit Bridge)**  
   `IslandView` 负责收缩/展开态、三面板切换（应用/Claude/任务）、状态提示、交互动画；`PanelManager` 负责 `NSPanel` 生命周期、跨桌面层级、点击监控与热区同步。
 - **State Layer (ViewModel + Settings)**  
-  `IslandViewModel` 维护主状态（展开态、搜索、应用列表、目标面板路由）；`SettingsManager` 负责设置项与 `UserDefaults` 持久化、交互配置广播。
+  `IslandViewModel` 维护主状态（展开态、搜索、应用列表、目标面板路由）；`SettingsManager` + `SettingsSchema` 负责设置键、默认值与 `UserDefaults` 持久化（含展开后面板启用集合、默认分段等）。
 - **Domain Services / 功能服务层**  
-  应用发现(`AppDiscoveryService`)、搜索(`AppSearchService`)、文件夹布局(`FolderManager`)、Claude CLI 检测(`ClaudeCLIService`)、终端会话捕获(`TerminalCaptureService`)。
+  应用发现(`AppDiscoveryService`)、搜索(`AppSearchService`)、文件夹布局(`FolderManager`)、Claude CLI 检测(`ClaudeCLIService`)、终端会话捕获(`TerminalCaptureService`)、任务引擎(`TaskEngine/`，可配置策略 JSON)。
 - **Platform Integration / 系统集成层**  
   刘海几何检测(`NotchDetector`)、全屏自动隐藏(`FullscreenCollapsedPillAutoHider`)、AppleScript 终端桥接（iTerm2/iTerm/Terminal）。
 - **Build & Distribution / 构建分发**  
@@ -177,31 +180,14 @@ open /Applications/BulingIsland.app
 ### Architectural Risks / 架构风险
 
 - `IslandView` 逻辑体量较大（状态监听、业务规则、动画耦合），后续维护成本高。
-- `SettingsManager` 作为全局单例承载大量职责，缺少“配置 schema + 迁移策略”。
-- 当前无自动化测试目标（`swift test` 报 `no tests found`），回归风险主要靠人工验证。
+- `SettingsManager` 作为全局单例仍承载较多职责；虽已抽出 `SettingsSchema`，长期仍宜考虑版本化迁移与更细粒度模块。
+- UI 与多终端联动路径复杂，发布前建议 `swift test` + Release 构建（`./build.sh` 或 `./install-local.sh`）并结合主要场景人工回归。
 
-## Bug Check / 功能 Bug 检查
+## Testing / 测试与质量
 
-本次检查方式：
-
-- 静态代码审查（核心入口、状态流、终端捕获、全屏隐藏、布局管理）。
-- 构建验证：`swift build`（通过）。
-- 测试验证：`swift test`（失败原因为无 `Tests` 目标，并非编译错误）。
-
-### Confirmed Issue / 已确认问题
-
-1. **通知监听释放不对称，存在重复监听/泄漏风险**  
-   `FullscreenCollapsedPillAutoHider.stop()` 中统一用 `NotificationCenter.default.removeObserver` 移除 token，但部分 token 实际由 `NSWorkspace.shared.notificationCenter` 注册。  
-   影响：反复 `start/stop` 或生命周期重建时，可能导致重复回调、隐藏逻辑抖动、资源泄漏。
-
-### Potential Issues / 潜在问题（建议回归验证）
-
-1. **应用唯一标识冲突风险**  
-   `AppInfo.id` 主要使用 `bundleIdentifier`；当用户存在多个同 bundle 应用副本时，布局与文件夹可能出现“同 ID 覆盖/错位”行为。  
-2. **终端捕获轮询成本偏高**  
-   轮询 + AppleScript 读取多会话全文尾窗，活动会话多时 CPU 抖动可能明显（尤其低电量场景）。
-3. **单体 View 的回归面大**  
-   `IslandView` 内大量 `onChange/onReceive` 串联，新增功能时容易引入状态联动回归。
+- **单元测试**：`Tests/BulingIslandTests/` 覆盖任务策略 JSON、任务面板文案与状态机、终端捕获合并逻辑、fixture 一致性等；本地执行 `swift test`。
+- **已知技术债（建议关注）**：`FullscreenCollapsedPillAutoHider` 若 `stop()` 与注册使用的 `NotificationCenter` 实例不一致，可能导致监听未正确移除（需回归全屏隐藏相关路径）。
+- **其他回归关注点**：同 `bundleIdentifier` 多副本应用的布局 ID；外部终端轮询在会话较多时的 CPU 占用。
 
 ## Optimization Plan / 优化精简升级建议
 
@@ -221,15 +207,15 @@ open /Applications/BulingIsland.app
 
 ### 3) Quality & Testability / 质量与可测试性
 
-- 建立 `Tests/`：先覆盖 `FolderManager`、`AppSearchService`、`TerminalOutputStatusAnalyzer`。
-- 加入最小自动化门禁：`swift build` + `swift test` + 基本格式/静态检查。
+- 在现有 `Tests/` 基础上继续覆盖 `FolderManager`、`AppSearchService` 等尚未充分测试的模块。
+- 加入最小自动化门禁：`swift build` + `swift test` + 基本格式/静态检查（CI 可选）。
 - 对关键状态流增加日志分级（debug/info/warn/error）与 session trace ID，便于排查联动问题。
 
 ## Can It Be Simplified & Upgraded? / 是否可以优化精简升级
 
 可以，且建议采用“**保功能、先收敛复杂度**”的渐进升级策略：
 
-1. **Phase 1（1~2 天）**：修复确认 bug、补齐基础单元测试目标、建立最小自动化门禁。  
+1. **Phase 1（1~2 天）**：修复确认 bug、巩固任务/终端相关测试门禁。  
 2. **Phase 2（3~5 天）**：拆分 `IslandView` 到三面板 Feature，抽离共享状态与事件。  
 3. **Phase 3（3~5 天）**：优化终端捕获轮询策略 + 权限引导 + 任务面板可用性增强。  
 4. **Phase 4（持续）**：性能基线（CPU/内存）与崩溃/异常日志闭环。
