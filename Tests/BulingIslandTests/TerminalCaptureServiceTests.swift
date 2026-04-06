@@ -90,6 +90,31 @@ final class TerminalCaptureServiceTests: XCTestCase {
         XCTAssertEqual(signal.interactionHint, "您的任务需要手工确认。")
     }
 
+    func testBodyCaptureScriptUsesHistoryFirstWithFallbacks() {
+        let script = TerminalAppleScript.bodyCaptureScript(
+            historyExpression: "history of t",
+            fallbackExpressions: ["contents of t", "text of t"]
+        )
+
+        let historyRange = script.range(of: "set bodyText to (history of t as text)")
+        let contentsRange = script.range(of: "set bodyText to (contents of t as text)")
+        let textRange = script.range(of: "set bodyText to (text of t as text)")
+
+        XCTAssertNotNil(historyRange)
+        XCTAssertNotNil(contentsRange)
+        XCTAssertNotNil(textRange)
+        XCTAssertLessThan(historyRange!.lowerBound, contentsRange!.lowerBound)
+        XCTAssertLessThan(contentsRange!.lowerBound, textRange!.lowerBound)
+    }
+
+    func testTruncatedTailScriptKeepsSharedTailWindowContract() {
+        let script = TerminalAppleScript.truncatedTailScript()
+
+        XCTAssertTrue(script.contains("set tailText to bodyText"))
+        XCTAssertTrue(script.contains("if charCount > 12000 then"))
+        XCTAssertTrue(script.contains("set tailText to text (charCount - 11999) thru -1 of tailText"))
+    }
+
     @MainActor
     func testSessionLifecycleTransitionsFromActiveToMissingThenEvicted() {
         let backend = MockCaptureBackend(
@@ -137,6 +162,8 @@ final class TerminalCaptureServiceTests: XCTestCase {
                     tail: """
                     › hi
                     • working (reading files)
+                    › Summarize recent commits
+                    gpt-5.4 medium · 100% left · ~/git/buling-island
                     """
                 )
             ])

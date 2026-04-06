@@ -111,23 +111,11 @@
       "titleRegex": [],
       "tailContains": [
         "• working",
-        "reconnecting",
-        "esc to interrupt",
-        "exec_command",
-        "apply_patch",
-        "update_plan",
-        "wait_agent",
-        "tool call",
-        "compiling",
-        "building for debugging",
-        "running tests",
-        "执行命令",
-        "应用补丁"
+        "reconnecting"
       ],
       "tailRegex": [
         "(?i)•\\s+working\\b",
-        "(?i)(?:•\\s*)?reconnecting\\b",
-        "(?im)^\\s*gpt-[0-9.]+-codex\\s+.*left\\s+·"
+        "(?i)(?:•\\s*)?reconnecting\\b"
       ]
     },
     "success": {

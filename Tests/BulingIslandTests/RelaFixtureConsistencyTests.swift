@@ -91,8 +91,8 @@ final class RelaFixtureConsistencyTests: XCTestCase {
         XCTAssertEqual(evaluated.snapshot.lifecycle, .success)
         XCTAssertEqual(evaluated.snapshot.renderTone, .success)
         XCTAssertEqual(evaluated.signal.tone, "success")
-        XCTAssertEqual(evaluated.prompt, "Summarize recent commits")
-        XCTAssertTrue(evaluated.snapshot.secondaryText.contains(TaskSessionTextToolkit.taskPanelCompletedLine))
+        XCTAssertNil(evaluated.prompt)
+        XCTAssertFalse(evaluated.snapshot.secondaryText.isEmpty)
     }
 
     func testCodexInteractionFixtureParsesAsWaitingInput() throws {
@@ -114,28 +114,36 @@ final class RelaFixtureConsistencyTests: XCTestCase {
 
     func testCodexWorkingFixtureParsesAsRunning() throws {
         let evaluated = try evaluateFixture(named: "codex-working.txt", title: "OpenAI Codex")
+        let expectedPrompt = "task面板中的每一个任务，现在都支持了claudecode的运行状态的检测，请将对应的检测机制，任务状态机刷新,样式渲染,提取成为标准"
 
         XCTAssertEqual(evaluated.strategyID, "codex")
         XCTAssertEqual(evaluated.analysis.lifecycle, .running)
         XCTAssertEqual(evaluated.snapshot.lifecycle, .running)
         XCTAssertEqual(evaluated.snapshot.renderTone, .running)
         XCTAssertEqual(evaluated.signal.tone, "busy")
-        XCTAssertEqual(evaluated.prompt, "Summarize recent commits")
+        XCTAssertEqual(evaluated.prompt, expectedPrompt)
         XCTAssertNil(evaluated.snapshot.interactionPrompt)
-        XCTAssertTrue(evaluated.snapshot.secondaryText.contains("Summarize recent commits"))
+        XCTAssertEqual(
+            evaluated.snapshot.secondaryText,
+            "\(expectedPrompt)\n• Working (7m 25s • esc to interrupt)"
+        )
     }
 
     func testCodexWorkingVariantFixtureParsesAsRunning() throws {
         let evaluated = try evaluateFixture(named: "codex^working2.txt", title: "OpenAI Codex")
+        let expectedPrompt = "1. 需要我在下一步把“策略注册示例”也接到 AppDelegate 启动流程里，一并提交成完整可调用入口. 2.扫描整个项目，并且给出架构上"
 
         XCTAssertEqual(evaluated.strategyID, "codex")
         XCTAssertEqual(evaluated.analysis.lifecycle, .running)
         XCTAssertEqual(evaluated.snapshot.lifecycle, .running)
         XCTAssertEqual(evaluated.snapshot.renderTone, .running)
         XCTAssertEqual(evaluated.signal.tone, "busy")
-        XCTAssertEqual(evaluated.prompt, "Summarize recent commits")
+        XCTAssertEqual(evaluated.prompt, expectedPrompt)
         XCTAssertNil(evaluated.snapshot.interactionPrompt)
-        XCTAssertTrue(evaluated.snapshot.secondaryText.contains("Summarize recent commits"))
+        XCTAssertEqual(
+            evaluated.snapshot.secondaryText,
+            "\(expectedPrompt)\n• Working (13s • esc to interrupt)"
+        )
     }
 
     func testEquivalentFixturesProduceConsistentRenderContracts() throws {
@@ -155,7 +163,6 @@ final class RelaFixtureConsistencyTests: XCTestCase {
         XCTAssertEqual(codexWorking.strategyID, codexWorkingVariant.strategyID)
         XCTAssertEqual(codexWorking.snapshot.lifecycle, codexWorkingVariant.snapshot.lifecycle)
         XCTAssertEqual(codexWorking.snapshot.renderTone, codexWorkingVariant.snapshot.renderTone)
-        XCTAssertEqual(codexWorking.prompt, codexWorkingVariant.prompt)
         XCTAssertEqual(codexWorking.snapshot.interactionPrompt, codexWorkingVariant.snapshot.interactionPrompt)
         XCTAssertEqual(codexWorking.signal.tone, codexWorkingVariant.signal.tone)
     }
@@ -194,8 +201,8 @@ final class RelaFixtureConsistencyTests: XCTestCase {
         XCTAssertEqual(terminal.signal.tone, iTerm.signal.tone)
         XCTAssertEqual(terminal.prompt, "hiss")
         XCTAssertEqual(iTerm.prompt, "哈哈哈11")
-        XCTAssertEqual(terminal.snapshot.secondaryText, "hiss")
-        XCTAssertEqual(iTerm.snapshot.secondaryText, "哈哈哈11")
+        XCTAssertEqual(terminal.snapshot.secondaryText, "hiss\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
+        XCTAssertEqual(iTerm.snapshot.secondaryText, "哈哈哈11\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
     }
 
     func testTerminalAndITermSamePromptResolveToIdenticalSecondaryText() throws {
@@ -233,8 +240,35 @@ final class RelaFixtureConsistencyTests: XCTestCase {
         XCTAssertEqual(iTerm.strategyID, "codex")
         XCTAssertEqual(terminal.snapshot.lifecycle, iTerm.snapshot.lifecycle)
         XCTAssertEqual(terminal.snapshot.renderTone, iTerm.snapshot.renderTone)
-        XCTAssertEqual(terminal.snapshot.secondaryText, prompt)
-        XCTAssertEqual(iTerm.snapshot.secondaryText, prompt)
+        XCTAssertEqual(terminal.snapshot.secondaryText, "\(prompt)\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
+        XCTAssertEqual(iTerm.snapshot.secondaryText, "\(prompt)\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
+    }
+
+    func testEmptyShellSessionsResolveToSameInactiveContractAcrossTerminalHosts() throws {
+        let iTermTail = ""
+        let terminalTail = "Last login: Mon Apr  6 12:23:30 on ttys004"
+
+        let iTerm = try evaluateInlineSession(
+            title: "iTerm2",
+            tail: iTermTail,
+            nativeID: "iterm-empty"
+        )
+        let terminal = try evaluateInlineSession(
+            title: "Terminal",
+            tail: terminalTail,
+            nativeID: "terminal-empty"
+        )
+
+        XCTAssertEqual(iTerm.strategyID, "generic")
+        XCTAssertEqual(terminal.strategyID, "generic")
+        XCTAssertEqual(iTerm.analysis.lifecycle, .inactiveTool)
+        XCTAssertEqual(terminal.analysis.lifecycle, .inactiveTool)
+        XCTAssertEqual(iTerm.snapshot.lifecycle, .inactiveTool)
+        XCTAssertEqual(terminal.snapshot.lifecycle, .inactiveTool)
+        XCTAssertEqual(iTerm.signal.tone, "info")
+        XCTAssertEqual(terminal.signal.tone, "info")
+        XCTAssertEqual(iTerm.analysis.secondaryText, "当前会话未匹配 Claude/Codex 策略")
+        XCTAssertEqual(terminal.analysis.secondaryText, "当前会话未匹配 Claude/Codex 策略")
     }
 
     func testCompletedCodexTaskCardBodyIsConsistentAcrossSupportedTerminals() throws {

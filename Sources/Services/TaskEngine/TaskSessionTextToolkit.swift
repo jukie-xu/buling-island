@@ -112,28 +112,24 @@ enum TaskSessionTextToolkit {
     }
 
     static func extractLatestUserPrompt(from tail: String) -> String? {
-        let lines = standardizedTerminalText(from: tail)
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let lines = standardizedLines(from: tail)
+        guard let match = latestUserPromptMatch(in: lines) else { return nil }
+        return match.prompt
+    }
 
-        for index in lines.indices.reversed() {
-            let line = lines[index]
-            guard isUserInputCommandLine(line) else { continue }
-            var prompt = line
-                .replacingOccurrences(of: "^[❯›»>]\\s*", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if prompt.isEmpty { continue }
-            if isNoiseLine(prompt) || isInputAreaLine(prompt) { continue }
-            if isCodexUserInputNoise(prompt) { continue }
-            if isCodexPlaceholderPrompt(promptLineIndex: index, in: lines) { continue }
-            if prompt.lowercased().contains("what should claude do") { continue }
-            if prompt.count > 120 {
-                prompt = String(prompt.prefix(120))
+    static func codexCurrentTaskIsActive(in tail: String) -> Bool {
+        let lines = standardizedLines(from: tail)
+        guard let lastInputIndex = latestCodexInputLineIndex(in: lines) else { return false }
+        guard lastInputIndex > lines.startIndex else { return false }
+
+        for index in stride(from: lastInputIndex - 1, through: lines.startIndex, by: -1) {
+            let candidate = lines[index]
+            if isAuxiliaryTaskChromeLine(candidate) || isCodexFooterStatusLine(candidate) {
+                continue
             }
-            return prompt
+            return isCodexActiveStatusLine(candidate)
         }
-        return nil
+        return false
     }
 
     static func extractLatestReply(from tail: String) -> String? {
@@ -516,7 +512,7 @@ enum TaskSessionTextToolkit {
         if lower.contains("tip: new try the codex app") { return true }
         if lower.contains("tip: new try the codex") { return true }
         if lower.contains("try the codex app with 2x rate") { return true }
-        if matchesRegex(#"(?i)\bgpt-[0-9.]+\s+\S+\s+·\s*\d+%\s+left\s+·"#, in: line) { return true }
+        if matchesRegex(#"(?i)\bgpt-[0-9a-z.\-]+\s+\S+\s+·\s*\d+%\s+left\s+·"#, in: line) { return true }
         return false
     }
 
@@ -536,7 +532,7 @@ enum TaskSessionTextToolkit {
 
         guard let nextNonEmpty else { return false }
         let nextLower = nextNonEmpty.lowercased()
-        let hasCodexFooterAfterPrompt = matchesRegex(#"(?i)\bgpt-[0-9.]+\s+\S+\s+·\s*\d+%\s+left\s+·"#, in: nextNonEmpty)
+        let hasCodexFooterAfterPrompt = matchesRegex(#"(?i)\bgpt-[0-9a-z.\-]+\s+\S+\s+·\s*\d+%\s+left\s+·"#, in: nextNonEmpty)
             || nextLower.contains("/model to change")
 
         guard hasCodexFooterAfterPrompt else { return false }
@@ -659,8 +655,17 @@ enum TaskSessionTextToolkit {
         return false
     }
 
+    static func isCodexActiveStatusLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if matchesRegex(#"(?i)^•\s+working\b"#, in: trimmed) { return true }
+        if matchesRegex(#"(?i)^(?:•\s*)?reconnecting\b"#, in: trimmed) { return true }
+        return false
+    }
+
     static func isNoiseLine(_ line: String) -> Bool {
         if isReconnectStatusLine(line) || reconnectDetailText(from: line) != nil { return false }
+        if isShellStartupChromeLine(line) { return true }
+        if isCodexFooterStatusLine(line) { return true }
         let lower = line.lowercased()
         if isStructuredCodeExcerptLine(line) {
             return true
@@ -697,6 +702,41 @@ enum TaskSessionTextToolkit {
         if stripped.allSatisfy({ "-_=|·•:".contains($0) }) {
             return true
         }
+        return false
+    }
+
+    static func isCodexFooterStatusLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        return matchesRegex(#"(?i)^gpt-[0-9a-z.\-]+\s+\S+\s+·\s*\d+%\s+left\s+·\s+.+$"#, in: trimmed)
+    }
+
+    static func isShellStartupChromeLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let lower = trimmed.lowercased()
+
+        let fixedPrefixes = [
+            "last login:",
+            "login:",
+            "the default interactive shell is now zsh",
+            "to update your account to use zsh",
+            "for more details, please visit",
+            "welcome to fish",
+            "type help for instructions",
+            "type \"help\" for instructions",
+            "type help to get started",
+            "message of the day",
+            "motd:",
+        ]
+        if fixedPrefixes.contains(where: { lower.hasPrefix($0) }) {
+            return true
+        }
+
+        if matchesRegex(#"(?i)^last\s+login:\s+.+\s+on\s+\S+$"#, in: trimmed) { return true }
+        if matchesRegex(#"(?i)^you have (?:new )?mail\.?$"#, in: trimmed) { return true }
+        if matchesRegex(#"(?i)^remember to update your shell.*$"#, in: trimmed) { return true }
+        if matchesRegex(#"(?i)^default interactive shell.*$"#, in: trimmed) { return true }
+
         return false
     }
 
@@ -754,6 +794,53 @@ enum TaskSessionTextToolkit {
     private static func isReconnectStatusLine(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         return matchesRegex(#"(?i)^(?:•\s*)?reconnecting\b"#, in: trimmed)
+    }
+
+    private static func standardizedLines(from tail: String) -> [String] {
+        standardizedTerminalText(from: tail)
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private struct UserPromptMatch {
+        let index: Int
+        let prompt: String
+    }
+
+    private static func latestCodexInputLineIndex(in lines: [String]) -> Int? {
+        for index in lines.indices.reversed() {
+            let line = lines[index]
+            guard isUserInputCommandLine(line) else { continue }
+            let prompt = line
+                .replacingOccurrences(of: "^[❯›»>]\\s*", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if prompt.isEmpty { continue }
+            if isCodexUserInputNoise(prompt) { continue }
+            if prompt.lowercased().contains("what should claude do") { continue }
+            return index
+        }
+        return nil
+    }
+
+    private static func latestUserPromptMatch(in lines: [String]) -> UserPromptMatch? {
+        for index in lines.indices.reversed() {
+            let line = lines[index]
+            guard isUserInputCommandLine(line) else { continue }
+            var prompt = line
+                .replacingOccurrences(of: "^[❯›»>]\\s*", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if prompt.isEmpty { continue }
+            if isNoiseLine(prompt) || isInputAreaLine(prompt) { continue }
+            if isCodexUserInputNoise(prompt) { continue }
+            if isCodexPlaceholderPrompt(promptLineIndex: index, in: lines) { continue }
+            if prompt.lowercased().contains("what should claude do") { continue }
+            if prompt.count > 120 {
+                prompt = String(prompt.prefix(120))
+            }
+            return UserPromptMatch(index: index, prompt: prompt)
+        }
+        return nil
     }
 
     private static func isStructuredCodeExcerptLine(_ line: String) -> Bool {

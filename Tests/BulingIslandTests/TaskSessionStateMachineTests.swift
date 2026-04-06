@@ -39,4 +39,5 @@ final class TaskSessionStateMachineTests: XCTestCase {
         XCTAssertEqual(sm.stabilize(sessionID: session, proposed: .idle, now: t0.addingTimeInterval(1)), .running)
         XCTAssertEqual(sm.stabilize(sessionID: session, proposed: .idle, now: t0.addingTimeInterval(3)), .idle)
     }
+
 }

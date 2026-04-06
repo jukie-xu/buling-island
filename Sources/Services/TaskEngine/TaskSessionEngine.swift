@@ -48,18 +48,33 @@ final class TaskSessionEngine: ObservableObject {
             let strategy = resolveStrategy(for: session)
             let analysis = strategy.analyze(session: session)
             let normalizedTail = session.standardizedTailOutput
-            let lifecycle = analysis.lifecycle
+            let codexCurrentTaskActive = strategy.strategyID == "codex"
+                ? TaskSessionTextToolkit.codexCurrentTaskIsActive(in: normalizedTail)
+                : false
+            let lifecycle: TaskLifecycleState = {
+                guard strategy.strategyID == "codex" else { return analysis.lifecycle }
+                switch analysis.lifecycle {
+                case .running:
+                    return codexCurrentTaskActive ? .running : .idle
+                case .idle:
+                    return codexCurrentTaskActive ? .running : .idle
+                default:
+                    return analysis.lifecycle
+                }
+            }()
+            var panelMem = taskPanelMemoryBySessionID[session.id] ?? TaskSessionPanelMemory()
+            let extractedPrompt = TaskSessionTextToolkit.extractLatestUserPrompt(from: normalizedTail)
+            let allowRunningSticky = !(strategy.strategyID == "codex" && !codexCurrentTaskActive)
 
             let stabilized = stateMachine.stabilize(
                 sessionID: session.id,
                 proposed: lifecycle,
-                now: now
+                now: now,
+                allowRunningSticky: allowRunningSticky
             )
             let tone = renderTone(for: stabilized, fallback: analysis.renderTone)
             let running = (stabilized == .running)
 
-            var panelMem = taskPanelMemoryBySessionID[session.id] ?? TaskSessionPanelMemory()
-            let extractedPrompt = TaskSessionTextToolkit.extractLatestUserPrompt(from: normalizedTail)
             let transcript = transcriptCache.observe(
                 sessionID: session.id,
                 normalizedTail: normalizedTail,
@@ -79,6 +94,12 @@ final class TaskSessionEngine: ObservableObject {
                 stabilizedLifecycle: stabilized,
                 memory: &panelMem
             )
+            if strategy.strategyID == "codex",
+               stabilized == .idle,
+               TaskSessionTextToolkit.extractLatestUserPrompt(from: normalizedTail) != nil,
+               !codexCurrentTaskActive {
+                panelMem.hasActiveTask = true
+            }
             taskPanelMemoryBySessionID[session.id] = panelMem
 
             let panelSecondaryText: String = {

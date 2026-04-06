@@ -205,6 +205,66 @@ final class TaskSessionPanelTextTests: XCTestCase {
         XCTAssertEqual(text, "提交并推送\n• Working (21s • esc to interrupt)")
     }
 
+    @MainActor
+    func testCodexLastPromptWithoutWorkingIsNotRunningAndShowsCompleted() throws {
+        let codex = try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: "codex"))
+        let tail = """
+        >_ OpenAI Codex (v0.118.0)
+        model: gpt-5.4 medium    /model to change
+        directory: ~/git/buling-island
+
+        › Improve documentation in @filename
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+
+        let engine = TaskSessionEngine(strategies: [codex])
+        let session = CapturedTerminalSession(
+            nativeSessionId: "codex-prompt-no-working",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "/dev/ttys031",
+            tailOutput: tail
+        )
+        engine.refresh(sessions: [session], now: Date(timeIntervalSince1970: 30_000))
+
+        let snapshot = try XCTUnwrap(engine.snapshotsBySessionID[session.id])
+        XCTAssertEqual(snapshot.lifecycle, .idle)
+        XCTAssertFalse(snapshot.isRunning)
+        XCTAssertEqual(snapshot.secondaryText, "Improve documentation in @filename\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
+    }
+
+    @MainActor
+    func testCodexWorkingAbovePlaceholderKeepsPreviousTaskRunning() throws {
+        let codex = try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: "codex"))
+        let tail = """
+        › 提交并推送
+
+        • Working (21s • esc to interrupt)
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+
+        let engine = TaskSessionEngine(strategies: [codex])
+        let session = CapturedTerminalSession(
+            nativeSessionId: "codex-working-placeholder-binding",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "/dev/ttys032",
+            tailOutput: tail
+        )
+        engine.refresh(sessions: [session], now: Date(timeIntervalSince1970: 30_100))
+
+        let snapshot = try XCTUnwrap(engine.snapshotsBySessionID[session.id])
+        XCTAssertEqual(snapshot.lifecycle, .running)
+        XCTAssertTrue(snapshot.isRunning)
+        XCTAssertEqual(snapshot.secondaryText, "提交并推送\n• Working (21s • esc to interrupt)")
+    }
+
     func testTaskPanelDisplayLinesSplitsPromptAndStatus() {
         let lines = TaskSessionTextToolkit.taskPanelDisplayLines(
             from: "提交并推送\n\(TaskSessionTextToolkit.taskPanelCompletedLine)"
@@ -230,6 +290,10 @@ final class TaskSessionPanelTextTests: XCTestCase {
         › 提交并推送
 
         • Working (21s • esc to interrupt)
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 100% left · ~/git/buling-island
         """
         let tailIdle = """
         › 提交并推送
@@ -271,5 +335,54 @@ final class TaskSessionPanelTextTests: XCTestCase {
         XCTAssertEqual(snap1.lifecycle, .idle)
         XCTAssertFalse(snap1.isRunning)
         XCTAssertEqual(snap1.secondaryText, "提交并推送\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
+    }
+
+    @MainActor
+    func testCodexPromptAndFooterOnlyTailExitsRunningImmediately() throws {
+        let codex = try XCTUnwrap(TaskStrategyFileLoader.configurableStrategy(strategyID: "codex"))
+        let tailRunning = """
+        › Improve documentation in @filename
+
+        • Working (21s • esc to interrupt)
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+        let tailIdle = """
+        › Improve documentation in @filename
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+
+        let engine = TaskSessionEngine(strategies: [codex])
+        let t0 = Date(timeIntervalSince1970: 20_000)
+        let t1 = Date(timeIntervalSince1970: 20_001)
+
+        let sessionRunning = CapturedTerminalSession(
+            nativeSessionId: "codex-prompt-footer-only",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "/dev/ttys030",
+            tailOutput: tailRunning
+        )
+        engine.refresh(sessions: [sessionRunning], now: t0)
+        XCTAssertEqual(engine.snapshotsBySessionID[sessionRunning.id]?.lifecycle, .running)
+
+        let sessionIdle = CapturedTerminalSession(
+            nativeSessionId: "codex-prompt-footer-only",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "buling-island (codex)",
+            tty: "/dev/ttys030",
+            tailOutput: tailIdle
+        )
+        engine.refresh(sessions: [sessionIdle], now: t1)
+
+        let snapshot = try XCTUnwrap(engine.snapshotsBySessionID[sessionIdle.id])
+        XCTAssertEqual(snapshot.lifecycle, .idle)
+        XCTAssertFalse(snapshot.isRunning)
+        XCTAssertEqual(snapshot.secondaryText, "Improve documentation in @filename\n\(TaskSessionTextToolkit.taskPanelCompletedLine)")
     }
 }

@@ -3,6 +3,13 @@ import XCTest
 
 final class TaskSessionTextToolkitTests: XCTestCase {
 
+    private func repoRootURL() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
     func testStandardizedTerminalTextRemovesTerminalEncodingDifferences() {
         let raw = "\u{001B}[32m❯\u{001B}[0m hi\u{00A0}\r\n\u{001B}]0;Codex\u{0007}  ⎿ reply\u{200B}\r"
 
@@ -354,5 +361,70 @@ final class TaskSessionTextToolkitTests: XCTestCase {
         )
 
         XCTAssertEqual(fingerprint1, fingerprint2)
+    }
+
+    func testCodexFooterLineIsExcludedFromDisplayExtraction() {
+        let tail = """
+        › Improve documentation in @filename
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+
+        let lines = TaskSessionTextToolkit.normalizedDisplayLines(from: tail)
+        XCTAssertEqual(lines, ["› Improve documentation in @filename"])
+    }
+
+    func testCodexCurrentTaskIsActiveOnlyWhenWorkingIsImmediatelyAboveLastInput() {
+        let activeTail = """
+        › 提交并推送
+
+        • Working (21s • esc to interrupt)
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+        let idleTail = """
+        › 提交并推送
+
+        • 已提交完成。
+
+        › Summarize recent commits
+
+        gpt-5.4 medium · 66% left · ~/git/buling-island
+        """
+
+        XCTAssertTrue(TaskSessionTextToolkit.codexCurrentTaskIsActive(in: activeTail))
+        XCTAssertFalse(TaskSessionTextToolkit.codexCurrentTaskIsActive(in: idleTail))
+    }
+
+    func testCodexCurrentTaskIsActiveOnWorkingFixture() throws {
+        let url = repoRootURL().appendingPathComponent("rela/codex-working.txt")
+        let tail = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(TaskSessionTextToolkit.codexCurrentTaskIsActive(in: tail))
+        let session = CapturedTerminalSession(
+            nativeSessionId: "fixture",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "OpenAI Codex",
+            tty: "ttys-fixture",
+            tailOutput: tail
+        )
+        XCTAssertTrue(TaskSessionTextToolkit.codexCurrentTaskIsActive(in: session.standardizedTailOutput))
+    }
+
+    func testCodexCurrentTaskIsActiveOnWorkingVariantFixture() throws {
+        let url = repoRootURL().appendingPathComponent("rela/codex^working2.txt")
+        let tail = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(TaskSessionTextToolkit.codexCurrentTaskIsActive(in: tail))
+        let session = CapturedTerminalSession(
+            nativeSessionId: "fixture2",
+            backendIdentifier: "backend",
+            terminalKind: .iTerm2,
+            title: "OpenAI Codex",
+            tty: "ttys-fixture",
+            tailOutput: tail
+        )
+        XCTAssertTrue(TaskSessionTextToolkit.codexCurrentTaskIsActive(in: session.standardizedTailOutput))
     }
 }

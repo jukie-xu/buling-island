@@ -1,12 +1,20 @@
 import Foundation
 
-/// iTerm2 专用：AppleScript 枚举会话与 `contents` 尾窗。
+/// iTerm2 专用：AppleScript 枚举会话，优先抓滚动缓冲，必要时回退可视内容 API。
 final class ITerm2SessionCaptureBackend: TerminalSessionCaptureBackend, @unchecked Sendable {
     let backendIdentifier = "com.buling.capture.iterm2"
     let shortLabel = "iTerm2"
     let supportedTerminalKinds: Set<TerminalKind> = [.iTerm2]
 
     nonisolated func fetchSessions() -> TerminalSessionFetchResult {
+        let bodyCapture = TerminalAppleScript.bodyCaptureScript(
+            historyExpression: "history of sessionRef",
+            fallbackExpressions: ["contents of sessionRef", "text of sessionRef"],
+            indentation: "                            "
+        )
+        let tailTruncation = TerminalAppleScript.truncatedTailScript(
+            indentation: "                            "
+        )
         let script = """
         set fieldSep to character id 31
         set recordSep to character id 30
@@ -25,29 +33,9 @@ final class ITerm2SessionCaptureBackend: TerminalSessionCaptureBackend, @uncheck
                             try
                                 set stty to (tty of sessionRef as text)
                             end try
-                            set bodyText to ""
-                            -- 与 Terminal.app 对齐：非前台标签下可视区 API 常不可靠；优先滚动缓冲（若宿主支持 `history`），再回退 `contents`/`text`。
-                            try
-                                set bodyText to (history of sessionRef as text)
-                            on error
-                                set bodyText to ""
-                            end try
-                            if bodyText is "" then
-                                try
-                                    set bodyText to (contents of sessionRef as text)
-                                on error
-                                    try
-                                        set bodyText to (text of sessionRef as text)
-                                    on error
-                                        set bodyText to ""
-                                    end try
-                                end try
-                            end if
-                            set tailText to bodyText
-                            set charCount to count of tailText
-                            if charCount > 12000 then
-                                set tailText to text (charCount - 11999) thru -1 of tailText
-                            end if
+                            -- 与 Terminal.app 对齐：优先滚动缓冲，宿主不支持时再回退可见内容 API。
+        \(bodyCapture)
+        \(tailTruncation)
                             set one to sid & fieldSep & "iTerm2" & fieldSep & stitle & fieldSep & stty & fieldSep & tailText
                             if outText is "" then
                                 set outText to one

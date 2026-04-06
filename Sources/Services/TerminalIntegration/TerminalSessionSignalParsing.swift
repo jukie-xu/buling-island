@@ -61,13 +61,17 @@ struct TaskStrategySessionSignalParser: TerminalSessionSignalParser {
         let analysis = strategy.analyze(session: session)
         let normalizedTail = session.standardizedTailOutput
         let compact = TaskSessionTextToolkit.analysisCompactTailText(normalizedTail)
+        let lifecycle: TaskLifecycleState = {
+            guard strategy.strategyID == "codex" else { return analysis.lifecycle }
+            return TaskSessionTextToolkit.codexCurrentTaskIsActive(in: normalizedTail) ? .running : (analysis.lifecycle == .running ? .idle : analysis.lifecycle)
+        }()
 
         if compact.isEmpty {
             let summary = analysis.secondaryText.isEmpty ? "暂无可分析输出" : analysis.secondaryText
             return TerminalSessionSignal(summaryText: summary, tone: "info", interactionHint: nil, errorFingerprint: nil)
         }
 
-        switch analysis.lifecycle {
+        switch lifecycle {
         case .error:
             let err = TaskSessionTextToolkit.lastErrorText(from: normalizedTail)
             let summary = err.isEmpty ? analysis.secondaryText : err

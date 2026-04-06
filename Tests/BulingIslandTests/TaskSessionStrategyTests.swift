@@ -62,7 +62,7 @@ final class TaskSessionStrategyTests: XCTestCase {
         let codexState = codex.analyze(session: session).lifecycle
 
         XCTAssertEqual(claudeState, .idle)
-        XCTAssertEqual(codexState, .running)
+        XCTAssertEqual(codexState, .idle)
     }
 
     func testCodexWaitingIncludesInteractionOptions() throws {
@@ -99,7 +99,12 @@ final class TaskSessionStrategyTests: XCTestCase {
             terminalKind: .iTerm2,
             title: "codex workspace",
             tty: "ttys003",
-            tailOutput: "• working (tests)"
+            tailOutput: """
+            › 提交并推送
+            • working (tests)
+            › Summarize recent commits
+            gpt-5.4 medium · 100% left · ~/git/buling-island
+            """
         )
 
         let engine = TaskSessionEngine(strategies: [generic, codex])

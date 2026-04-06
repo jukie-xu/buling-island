@@ -66,3 +66,62 @@
 ```bash
 swift test
 ```
+
+## 6. 新终端接入规则（强制）
+
+凡是新增、修改、替换任何终端接入能力，包括但不限于：
+
+- 新增 `TerminalIntegration/*SessionCaptureBackend`
+- 修改 AppleScript / CLI / 插件式终端捕获实现
+- 新增新的终端宿主（如 Warp、Ghostty、Kitty、WezTerm、Tabby 等）
+- 调整已有 backend 的抓取优先级、尾部截断、会话标识、输入回放方式
+
+必须同时满足以下规则。
+
+### 6.1 分层边界不可打破
+
+- backend 只负责抓取会话列表、原始尾部文本、会话激活与输入投递
+- backend 不得直接做任务生命周期判定、prompt/reply 提取、secondaryText 拼装、pill 文案拼装
+- 所有上层分析必须统一走 `CapturedTerminalSession.standardizedTailOutput`
+- 不允许在 View、TaskEngine、SignalParsing 之外另起一套“仅某终端专用”的展示分析逻辑
+
+### 6.2 文本源优先级必须和现有标准对齐
+
+- 若宿主提供 scrollback / history，优先抓取 scrollback / history
+- 仅当 scrollback / history 不可用或为空时，才回退 `contents`、`text` 或其他可视内容 API
+- 新终端若无法提供 scrollback，必须在设计文档中明确说明退化行为与风险
+- 尾部截断策略必须与现有统一约束保持一致；不要在不同 backend 中各自发明不同窗口大小
+
+### 6.3 共享逻辑优先抽取，不允许复制分叉
+
+- 多个 backend 共享的 AppleScript 片段、尾部截断、字段拼接、错误分类逻辑，应优先下沉到共享 helper
+- 若新终端接入复制了现有 backend 逻辑，必须同时评估并抽取公共部分
+- 文档、注释、实现三者必须一致；若规则改了，注释和 helper 也必须同步更新
+
+### 6.4 终端差异只能留在“抓取层”
+
+- 一旦文本进入 `TaskSessionTextToolkit.standardizedTerminalText(from:)`，后续解析必须与终端宿主无关
+- 如果新增终端暴露了新的 ANSI、框线、空白、控制字符或 prompt 变体，必须先补共享标准化规则
+- 不允许为了某个终端在上层直接加入临时字符串特判，绕过共享标准化层
+
+### 6.5 呈现结果必须与既有终端严格一致
+
+- 对于相同语义的会话，新终端与 `iTerm2` / `Terminal.app` 的最终结果必须一致
+- 一致的范围至少包括：`strategyID`、`lifecycle`、`renderTone`、`interactionPrompt`、`interactionOptions`、`secondaryText`
+- 要求是“最终渲染契约一致”，不是“看起来差不多”
+- 若不能做到一致，必须先修共享解析链路，而不是接受该终端单独分叉
+
+### 6.6 测试是接入门槛，不是补充项
+
+- 新终端接入时，必须新增至少一组与现有终端的等价样例测试
+- 若涉及真实终端输出，优先补到 `rela/` 样例并纳入 `RelaFixtureConsistencyTests`
+- 若涉及 backend 共享脚本或公共 helper，也必须补对应单元测试，锁定捕获优先级与共享契约
+- 未补跨终端一致性测试，不得视为接入完成
+
+### 6.7 接入时的最小交付清单
+
+- 新增或更新设计文档，说明捕获能力、限制、风险与验证方式
+- backend 实现只做抓取与投递，不引入上层分叉
+- 共享 helper 或标准化层已补齐必要规则
+- `swift test` 通过
+- `./install-local.sh` 已执行

@@ -6,6 +6,49 @@ enum TerminalAppleScriptError: Error {
 }
 
 enum TerminalAppleScript {
+    static func bodyCaptureScript(
+        historyExpression: String,
+        fallbackExpressions: [String],
+        indentation: String = ""
+    ) -> String {
+        var lines: [String] = [
+            "\(indentation)set bodyText to \"\"",
+            "\(indentation)try",
+            "\(indentation)    set bodyText to (\(historyExpression) as text)",
+            "\(indentation)on error",
+            "\(indentation)    set bodyText to \"\"",
+            "\(indentation)end try",
+        ]
+
+        for expression in fallbackExpressions {
+            lines.append("\(indentation)if bodyText is \"\" then")
+            lines.append("\(indentation)    try")
+            lines.append("\(indentation)        set bodyText to (\(expression) as text)")
+            lines.append("\(indentation)    on error")
+            lines.append("\(indentation)        set bodyText to \"\"")
+            lines.append("\(indentation)    end try")
+            lines.append("\(indentation)end if")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    static func truncatedTailScript(
+        sourceVariable: String = "bodyText",
+        targetVariable: String = "tailText",
+        maxCharacters: Int = 12_000,
+        indentation: String = ""
+    ) -> String {
+        let retainedLength = maxCharacters - 1
+        return [
+            "\(indentation)set \(targetVariable) to \(sourceVariable)",
+            "\(indentation)set charCount to count of \(targetVariable)",
+            "\(indentation)if charCount > \(maxCharacters) then",
+            "\(indentation)    set \(targetVariable) to text (charCount - \(retainedLength)) thru -1 of \(targetVariable)",
+            "\(indentation)end if",
+        ].joined(separator: "\n")
+    }
+
     /// 运行 AppleScript，返回标准输出整段文本（已 trim）。
     static func runReturningStdout(_ source: String) -> Result<String, TerminalAppleScriptError> {
         let process = Process()

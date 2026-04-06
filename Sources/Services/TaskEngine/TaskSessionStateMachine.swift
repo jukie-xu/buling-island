@@ -15,7 +15,8 @@ struct TaskSessionStateMachine {
     mutating func stabilize(
         sessionID: String,
         proposed: TaskLifecycleState,
-        now: Date
+        now: Date,
+        allowRunningSticky: Bool = true
     ) -> TaskLifecycleState {
         defer {
             memoryBySessionID[sessionID] = Memory(lifecycle: proposed, updatedAt: now)
@@ -37,6 +38,7 @@ struct TaskSessionStateMachine {
         }
         if prev.lifecycle == .running,
            proposed == .idle,
+           allowRunningSticky,
            now.timeIntervalSince(prev.updatedAt) <= 2 {
             return .running
         }

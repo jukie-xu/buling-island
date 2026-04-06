@@ -1,6 +1,6 @@
 import Foundation
 
-/// macOS 自带 Terminal.app：优先读取当前可视内容，失败时回退 `history`。
+/// macOS 自带 Terminal.app：优先读取滚动缓冲，失败时回退当前可视内容。
 /// 会话键为 `窗口 id` + `标签序号`（`wid:tabIndex`），与 iTerm 的 UUID 不同。
 final class AppleTerminalSessionCaptureBackend: TerminalSessionCaptureBackend, @unchecked Sendable {
     let backendIdentifier = "com.buling.capture.apple-terminal"
@@ -8,6 +8,14 @@ final class AppleTerminalSessionCaptureBackend: TerminalSessionCaptureBackend, @
     let supportedTerminalKinds: Set<TerminalKind> = [.appleTerminal]
 
     nonisolated func fetchSessions() -> TerminalSessionFetchResult {
+        let bodyCapture = TerminalAppleScript.bodyCaptureScript(
+            historyExpression: "history of t",
+            fallbackExpressions: ["contents of t"],
+            indentation: "                            "
+        )
+        let tailTruncation = TerminalAppleScript.truncatedTailScript(
+            indentation: "                            "
+        )
         let script = """
         set fieldSep to character id 31
         set recordSep to character id 30
@@ -31,21 +39,9 @@ final class AppleTerminalSessionCaptureBackend: TerminalSessionCaptureBackend, @
                             try
                                 set stty to tty of t as text
                             end try
-                            set bodyText to ""
-                            -- TUI 场景下优先抓当前可见内容；`history` 只作为兜底，否则很容易退化成 shell scrollback。
-                            try
-                                set bodyText to contents of t as text
-                            end try
-                            if bodyText is "" then
-                                try
-                                    set bodyText to history of t as text
-                                end try
-                            end if
-                            set tailText to bodyText
-                            set charCount to count of tailText
-                            if charCount > 12000 then
-                                set tailText to text (charCount - 11999) thru -1 of tailText
-                            end if
+                            -- 与 iTerm 捕获严格对齐：优先滚动缓冲，拿不到时再回退当前可见内容。
+        \(bodyCapture)
+        \(tailTruncation)
                             set sid to (wid as text) & ":" & (ti as text)
                             set one to sid & fieldSep & "Terminal" & fieldSep & stitle & fieldSep & stty & fieldSep & tailText
                             if outText is "" then
